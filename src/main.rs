@@ -43,6 +43,25 @@ enum Command {
     },
     /// List all available schemas.
     Schemas,
+
+    /// Sign an unsigned VAA with a guardian key.
+    #[cfg(feature = "sign")]
+    Sign {
+        /// Guardian secret key (hex-encoded secp256k1)
+        #[arg(long, env = "GUARDIAN_KEY")]
+        guardian_key: String,
+
+        /// Guardian index in the set
+        #[arg(long, default_value = "0")]
+        guardian_index: u8,
+
+        /// Output format: hex or base64
+        #[arg(long, default_value = "hex")]
+        format: String,
+
+        /// Unsigned VAA as hex string, @file, or stdin
+        vaa: Option<String>,
+    },
 }
 
 fn main() {
@@ -65,6 +84,13 @@ fn run() -> Result<()> {
             overrides,
         } => cmd_build(&reg, schema.as_deref(), json, &overrides),
         Command::Schemas => cmd_schemas(&reg),
+        #[cfg(feature = "sign")]
+        Command::Sign {
+            guardian_key,
+            guardian_index,
+            format,
+            vaa,
+        } => cmd_sign(&guardian_key, guardian_index, &format, vaa),
     }
 }
 
@@ -205,6 +231,93 @@ fn read_payload(arg: Option<String>) -> Result<Vec<u8>> {
             }
         }
     }
+}
+
+#[cfg(feature = "sign")]
+fn cmd_sign(guardian_key: &str, guardian_index: u8, format: &str, vaa_arg: Option<String>) -> Result<()> {
+    let raw = read_payload(vaa_arg)?;
+
+    // Parse unsigned VAA header
+    if raw.is_empty() {
+        bail!("empty VAA");
+    }
+    if raw[0] != 1 {
+        bail!("unsupported VAA version: {}", raw[0]);
+    }
+    if raw.len() < 6 {
+        bail!("VAA too short to contain header");
+    }
+
+    let guardian_set_index = u32::from_be_bytes(raw[1..5].try_into().unwrap());
+    let sig_count = raw[5] as usize;
+    let body_offset = 6 + sig_count * 66;
+
+    if raw.len() < body_offset {
+        bail!("VAA truncated: expected at least {} bytes for {} signatures, got {}", body_offset, sig_count, raw.len());
+    }
+
+    let body = &raw[body_offset..];
+    let signature = sign_vaa_body(guardian_key, guardian_index, body)?;
+
+    // Collect existing signatures + new one
+    let mut signatures: Vec<[u8; 66]> = Vec::with_capacity(sig_count + 1);
+    for i in 0..sig_count {
+        let start = 6 + i * 66;
+        let mut sig = [0u8; 66];
+        sig.copy_from_slice(&raw[start..start + 66]);
+        signatures.push(sig);
+    }
+    signatures.push(signature);
+
+    // Sort by guardian index (first byte)
+    signatures.sort_by_key(|s| s[0]);
+
+    // Build signed VAA
+    let mut signed = Vec::new();
+    signed.push(1u8); // version
+    signed.extend_from_slice(&guardian_set_index.to_be_bytes());
+    signed.push(signatures.len() as u8);
+    for sig in &signatures {
+        signed.extend_from_slice(sig);
+    }
+    signed.extend_from_slice(body);
+
+    match format {
+        "base64" | "b64" => {
+            use base64::Engine;
+            println!("{}", base64::engine::general_purpose::STANDARD.encode(&signed));
+        }
+        _ => {
+            println!("{}", hex::encode(&signed));
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "sign")]
+fn sign_vaa_body(key_hex: &str, index: u8, body: &[u8]) -> Result<[u8; 66]> {
+    use sha3::Digest;
+
+    let key_hex = key_hex.trim_start_matches("0x");
+    let key_bytes: [u8; 32] = hex::decode(key_hex)
+        .context("invalid guardian key hex")?
+        .try_into()
+        .map_err(|v: Vec<u8>| anyhow::anyhow!("guardian key must be 32 bytes, got {}", v.len()))?;
+
+    let secret = libsecp256k1::SecretKey::parse(&key_bytes)
+        .map_err(|e| anyhow::anyhow!("invalid secp256k1 key: {}", e))?;
+
+    let hash1 = sha3::Keccak256::digest(body);
+    let digest: [u8; 32] = sha3::Keccak256::digest(&hash1).into();
+    let msg = libsecp256k1::Message::parse(&digest);
+    let (sig, rec) = libsecp256k1::sign(&msg, &secret);
+
+    let mut result = [0u8; 66];
+    result[0] = index;
+    result[1..65].copy_from_slice(&sig.serialize());
+    result[65] = rec.serialize();
+    Ok(result)
 }
 
 /// Set a value in a nested JSON object using a dotted path.
