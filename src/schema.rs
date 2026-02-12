@@ -152,8 +152,8 @@ impl<'de> Deserialize<'de> for Field {
                 } else if let Some(lp) = length_prefix_val {
                     Ok(Field::LengthPrefix(lp))
                 } else if let (Some(name), Some(ty)) = (name_val, type_val) {
-                    let field_type = FieldType::from_type_str(&ty)
-                        .map_err(|e| de::Error::custom(e))?;
+                    let field_type =
+                        FieldType::from_type_str(&ty).map_err(|e| de::Error::custom(e))?;
                     Ok(Field::Named {
                         name,
                         field_type,

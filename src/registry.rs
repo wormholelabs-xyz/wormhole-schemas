@@ -17,6 +17,11 @@ const MAX_NESTING_DEPTH: usize = 32;
 /// Maximum repeat count when parsing untrusted binary input.
 const MAX_REPEAT_COUNT: usize = 256;
 
+/// Synthetic schema name used as a greedy catch-all during inference.
+const CATCHALL_KEY: &str = "__catchall__";
+/// Field name in the catch-all schema that captures raw bytes.
+const CATCHALL_FIELD: &str = "__payload__";
+
 /// Cache for schemas loaded on-demand (local overrides discovered after
 /// initial load, and optionally remote fetches from GitHub).
 struct RuntimeCache {
@@ -101,6 +106,21 @@ impl Registry {
             }
         }
 
+        // Synthetic catch-all schema for inference (single hex field eats all bytes)
+        schemas.insert(
+            CATCHALL_KEY.to_string(),
+            Schema {
+                about: None,
+                params: vec![],
+                fields: Some(vec![Field::Named {
+                    name: CATCHALL_FIELD.to_string(),
+                    field_type: schema::FieldType::Hex,
+                    help: None,
+                }]),
+                ref_: None,
+            },
+        );
+
         Ok(Self {
             schema_dir: schema_dir.to_path_buf(),
             schemas,
@@ -122,7 +142,12 @@ impl Registry {
 
     /// List all loaded schema names.
     pub fn schemas(&self) -> Vec<&str> {
-        let mut names: Vec<&str> = self.schemas.keys().map(|s| s.as_str()).collect();
+        let mut names: Vec<&str> = self
+            .schemas
+            .keys()
+            .filter(|k| k.as_str() != CATCHALL_KEY)
+            .map(|s| s.as_str())
+            .collect();
         names.sort();
         names
     }
@@ -130,6 +155,135 @@ impl Registry {
     /// Get a schema by name.
     pub fn get(&self, name: &str) -> Option<&Schema> {
         self.schemas.get(name)
+    }
+
+    /// Return schema names that have no type parameters (ground schemas).
+    /// These are the schemas that can be used for inference.
+    pub fn ground_schemas(&self) -> Vec<&str> {
+        let mut names: Vec<&str> = self
+            .schemas
+            .iter()
+            .filter(|(k, s)| s.params.is_empty() && k.as_str() != CATCHALL_KEY)
+            .map(|(k, _)| k.as_str())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// Try to infer the schema from raw binary data.
+    ///
+    /// Uses a greedy+recursive approach:
+    /// 1. Try non-catch-all ground schemas directly.
+    /// 2. Try each single-param schema with a synthetic catch-all inner type.
+    ///    If it parses, extract the captured inner bytes and recursively infer.
+    /// 3. Fall back to catch-all ground schemas (hex-payload, etc.).
+    pub fn infer(&self, data: &[u8]) -> Result<(String, serde_json::Value)> {
+        self.infer_recursive(data, 0)
+    }
+
+    /// Maximum recursion depth for inference (prevents infinite loops).
+    const MAX_INFER_DEPTH: usize = 8;
+
+    fn infer_recursive(&self, data: &[u8], depth: usize) -> Result<(String, serde_json::Value)> {
+        if depth > Self::MAX_INFER_DEPTH {
+            bail!(
+                "inference exceeded maximum depth of {}",
+                Self::MAX_INFER_DEPTH
+            );
+        }
+
+        let ground = self.ground_schemas();
+
+        // Partition: specific vs catch-all
+        let mut specific = Vec::new();
+        let mut catchall = Vec::new();
+        for name in &ground {
+            if self.is_catchall(name) {
+                catchall.push(*name);
+            } else {
+                specific.push(*name);
+            }
+        }
+
+        // Pass 1: try specific ground schemas
+        for name in &specific {
+            if let Ok(parsed) = self.parse(name, data) {
+                return Ok((name.to_string(), parsed));
+            }
+        }
+
+        // Pass 2: try single-param schemas with the synthetic catch-all
+        let mut parameterized: Vec<&str> = self
+            .schemas
+            .iter()
+            .filter(|(k, s)| s.params.len() == 1 && k.as_str() != CATCHALL_KEY)
+            .map(|(k, _)| k.as_str())
+            .collect();
+        parameterized.sort();
+
+        for outer in &parameterized {
+            let greedy_ref = format!("{}<{}>", outer, CATCHALL_KEY);
+            let greedy_parsed = match self.parse(&greedy_ref, data) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            // Extract the captured inner bytes from __payload__
+            let inner_hex = match find_field(&greedy_parsed, CATCHALL_FIELD) {
+                Some(h) => h,
+                None => continue,
+            };
+            let inner_bytes = match hex::decode(&inner_hex) {
+                Ok(b) => b,
+                Err(_) => continue,
+            };
+
+            // Recursively infer the inner payload
+            if let Ok((inner_name, _)) = self.infer_recursive(&inner_bytes, depth + 1) {
+                // Construct the fully-qualified ref and do a real parse
+                let full_ref = format!("{}<{}>", outer, inner_name);
+                if let Ok(final_parsed) = self.parse(&full_ref, data) {
+                    return Ok((full_ref, final_parsed));
+                }
+            }
+
+            // If recursive refinement failed, the outer still matched with catch-all.
+            // We could return outer<hex-payload> but that's not very useful — keep trying
+            // other outers.
+        }
+
+        // Pass 3: catch-all ground schemas as last resort
+        for name in &catchall {
+            if let Ok(parsed) = self.parse(name, data) {
+                return Ok((name.to_string(), parsed));
+            }
+        }
+
+        bail!(
+            "could not infer schema: no schema matched the {} byte payload",
+            data.len()
+        )
+    }
+
+    /// True if the schema is a catch-all (single hex field, or empty fields).
+    fn is_catchall(&self, name: &str) -> bool {
+        let Some(schema) = self.schemas.get(name) else {
+            return false;
+        };
+        let Some(fields) = &schema.fields else {
+            return false;
+        };
+        match fields.len() {
+            0 => true, // empty schema
+            1 => matches!(
+                &fields[0],
+                Field::Named {
+                    field_type: schema::FieldType::Hex,
+                    ..
+                }
+            ),
+            _ => false,
+        }
     }
 
     /// Collect all named fields (arguments) for a schema ref string.
@@ -145,32 +299,91 @@ impl Registry {
     }
 
     /// Serialize a schema's payload given field values as a JSON object.
-    pub fn serialize(
-        &self,
-        ref_str: &str,
-        values: &serde_json::Value,
-    ) -> Result<Vec<u8>> {
+    pub fn serialize(&self, ref_str: &str, values: &serde_json::Value) -> Result<Vec<u8>> {
         let parsed = self.normalize_ref(ref_str)?;
+
+        // Pre-validate: collect all missing fields across the entire schema tree
+        let mut missing = Vec::new();
         let mut visited = HashSet::new();
+        self.collect_missing_recursive(
+            &parsed,
+            &BTreeMap::new(),
+            values,
+            &mut visited,
+            &mut missing,
+        )?;
+        if !missing.is_empty() {
+            bail!("missing fields: {}", missing.join(", "));
+        }
+
+        visited.clear();
         let mut output = Vec::new();
         self.serialize_recursive(&parsed, &BTreeMap::new(), values, &mut output, &mut visited)?;
         Ok(output)
     }
 
     /// Normalize a user-supplied ref string into a ParsedRef.
-    /// Bare names (no `@` prefix) are treated as `@this/name`.
+    /// Bare names (no `@` prefix) are resolved by searching loaded schemas
+    /// for a unique match on the trailing name segment. Falls back to `@this/name`.
     /// All `Param` nodes are converted to `@this/` refs since user-facing
     /// strings never contain type variables — those only appear in schema files.
     fn normalize_ref(&self, ref_str: &str) -> Result<ParsedRef> {
         let ref_str = ref_str.trim();
-        let parsed = if ref_str.starts_with('@') {
-            refs::parse_ref(ref_str)?
+        let resolved = if ref_str.starts_with('@') {
+            ref_str.to_string()
         } else {
-            // Treat as bare name, possibly with angle brackets
-            let full = format!("@this/{}", ref_str);
-            refs::parse_ref(&full)?
+            self.resolve_short_name(ref_str)
         };
+        let parsed = refs::parse_ref(&resolved)?;
         Ok(Self::params_to_this(parsed))
+    }
+
+    /// Resolve a bare name (like `onboard` or `vaa<onboard>`) to a fully
+    /// scoped ref string by matching against loaded schema names.
+    fn resolve_short_name(&self, name: &str) -> String {
+        // Extract the base name (before any angle brackets)
+        let base = name.split('<').next().unwrap_or(name);
+
+        // Search for loaded schemas whose last path segment matches
+        let matches: Vec<&str> = self
+            .schemas
+            .keys()
+            .filter(|k| k.rsplit('/').next() == Some(base))
+            .map(|k| k.as_str())
+            .collect();
+
+        if matches.len() == 1 {
+            // Unique match: replace the bare base name with the full scoped name
+            let full_base = matches[0];
+            if name.contains('<') {
+                // Has angle brackets — replace just the base part, recursively
+                // resolving the inner args too
+                let scope = &full_base[..full_base.rfind('/').unwrap()];
+                self.resolve_short_ref_recursive(name, scope)
+            } else {
+                full_base.to_string()
+            }
+        } else {
+            // Ambiguous or not found — fall back to @this/ prefix
+            format!("@this/{}", name)
+        }
+    }
+
+    /// Recursively resolve bare names in a ref string like `vaa<onboard>`.
+    fn resolve_short_ref_recursive(&self, ref_str: &str, _default_scope: &str) -> String {
+        // Split into base<args>
+        if let Some(open) = ref_str.find('<') {
+            let base = &ref_str[..open];
+            // Find matching close bracket
+            let inner = &ref_str[open + 1..ref_str.len() - 1];
+            let resolved_base = self.resolve_short_name(base);
+
+            // Resolve inner args (split by top-level commas)
+            let resolved_args = self.resolve_short_name(inner);
+            format!("{}<{}>", resolved_base, resolved_args)
+        } else {
+            self.resolve_short_name(ref_str)
+        }
     }
 
     /// Recursively convert all Param nodes to @this/ Concrete refs.
@@ -355,6 +568,14 @@ impl Registry {
     /// For remote refs (`@org/repo/name`), checks init-time schemas first,
     /// then the runtime cache, then falls back to fetching from GitHub.
     fn load_schema(&self, scope: &Scope, name: &str) -> Result<Schema> {
+        // Synthetic catch-all lives in local scope regardless of how it's referenced
+        if name == CATCHALL_KEY {
+            return self
+                .schemas
+                .get(CATCHALL_KEY)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("schema not found: {}", name));
+        }
         match scope {
             Scope::This => self
                 .schemas
@@ -474,6 +695,86 @@ impl Registry {
         Ok(args)
     }
 
+    /// Walk the schema tree and collect names of missing Named fields.
+    fn collect_missing_recursive(
+        &self,
+        parsed: &ParsedRef,
+        bindings: &BTreeMap<String, ParsedRef>,
+        values: &serde_json::Value,
+        visited: &mut HashSet<String>,
+        missing: &mut Vec<String>,
+    ) -> Result<()> {
+        let (fields, new_bindings) = self.resolve_fields(parsed, bindings, visited)?;
+        self.collect_missing_fields(&fields, &new_bindings, values, visited, missing)
+    }
+
+    fn collect_missing_fields(
+        &self,
+        fields: &[Field],
+        bindings: &BTreeMap<String, ParsedRef>,
+        values: &serde_json::Value,
+        visited: &mut HashSet<String>,
+        missing: &mut Vec<String>,
+    ) -> Result<()> {
+        let mut i = 0;
+        while i < fields.len() {
+            match &fields[i] {
+                Field::Named { name, .. } => {
+                    if values.get(name).and_then(|v| v.as_str()).is_none() {
+                        missing.push(name.clone());
+                    }
+                }
+                Field::LengthPrefix(_) => {
+                    i += 1;
+                    if i >= fields.len() {
+                        break;
+                    }
+                    if let Field::Ref { ref_, name } = &fields[i] {
+                        let inner = if ref_.starts_with('@') {
+                            refs::parse_ref(ref_)?
+                        } else {
+                            ParsedRef::Param(ref_.clone())
+                        };
+                        let inner_values = if let Some(name) = name {
+                            values.get(name).unwrap_or(values)
+                        } else {
+                            values
+                        };
+                        self.collect_missing_recursive(
+                            &inner,
+                            bindings,
+                            inner_values,
+                            visited,
+                            missing,
+                        )?;
+                    }
+                }
+                Field::Ref { ref_, name } => {
+                    let inner = if ref_.starts_with('@') {
+                        refs::parse_ref(ref_)?
+                    } else {
+                        ParsedRef::Param(ref_.clone())
+                    };
+                    let inner_values = if let Some(name) = name {
+                        values.get(name).unwrap_or(values)
+                    } else {
+                        values
+                    };
+                    self.collect_missing_recursive(
+                        &inner,
+                        bindings,
+                        inner_values,
+                        visited,
+                        missing,
+                    )?;
+                }
+                Field::Const { .. } | Field::Zeros(_) | Field::Repeat { .. } => {}
+            }
+            i += 1;
+        }
+        Ok(())
+    }
+
     /// Recursively serialize fields from a parsed ref.
     fn serialize_recursive(
         &self,
@@ -580,24 +881,42 @@ impl Registry {
                 }
                 Field::Repeat {
                     name,
-                    count_field: _,
+                    count_field,
                     ref_,
                 } => {
-                    // Look up the array in JSON; serialize each item against the ref schema
-                    if let Some(arr) = values.get(name).and_then(|v| v.as_array()) {
-                        let inner = if ref_.starts_with('@') {
-                            refs::parse_ref(ref_)?
-                        } else {
-                            ParsedRef::Param(ref_.clone())
-                        };
-                        for (idx, item) in arr.iter().enumerate() {
-                            self.serialize_recursive(&inner, bindings, item, output, visited)
-                                .with_context(|| {
-                                    format!("serializing repeat '{}' item {}", name, idx)
-                                })?;
-                        }
+                    let arr = values
+                        .get(name)
+                        .and_then(|v| v.as_array())
+                        .map(|a| a.as_slice())
+                        .unwrap_or(&[]);
+
+                    // Validate array length matches the count field
+                    let expected_count: usize = values
+                        .get(count_field)
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0);
+                    if arr.len() != expected_count {
+                        bail!(
+                            "repeat '{}': array has {} items but '{}' is {}",
+                            name,
+                            arr.len(),
+                            count_field,
+                            expected_count,
+                        );
                     }
-                    // If no array present, emit nothing (count=0)
+
+                    let inner = if ref_.starts_with('@') {
+                        refs::parse_ref(ref_)?
+                    } else {
+                        ParsedRef::Param(ref_.clone())
+                    };
+                    for (idx, item) in arr.iter().enumerate() {
+                        self.serialize_recursive(&inner, bindings, item, output, visited)
+                            .with_context(|| {
+                                format!("serializing repeat '{}' item {}", name, idx)
+                            })?;
+                    }
                 }
             }
             i += 1;
@@ -787,5 +1106,32 @@ impl Registry {
             i += 1;
         }
         Ok(map)
+    }
+}
+
+/// Recursively search a JSON value for a field with the given key.
+/// Returns the string value if found.
+fn find_field(value: &serde_json::Value, key: &str) -> Option<String> {
+    match value {
+        serde_json::Value::Object(map) => {
+            if let Some(v) = map.get(key) {
+                return v.as_str().map(|s| s.to_string());
+            }
+            for v in map.values() {
+                if let Some(found) = find_field(v, key) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        serde_json::Value::Array(arr) => {
+            for v in arr {
+                if let Some(found) = find_field(v, key) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        _ => None,
     }
 }

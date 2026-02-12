@@ -228,9 +228,7 @@ fn serialize_route_full_ntt_payload() {
         },
     });
 
-    let payload = reg
-        .serialize(&format!("{XRPL}/route"), &values)
-        .unwrap();
+    let payload = reg.serialize(&format!("{XRPL}/route"), &values).unwrap();
 
     // NTT = 79 bytes (no additional_payload_len with EmptyPayload)
     // mgr = 32 + 32 + 2 + 79 = 145 bytes
@@ -282,16 +280,16 @@ fn serialize_route_via_explicit_ref_string() {
     // Using explicit parameterized ref instead of "route" name
     let payload = reg
         .serialize(
-            &format!("{NTT}/transceiver-message<{NTT}/ntt-manager-message<{NTT}/native-token-transfer>>"),
+            &format!(
+                "{NTT}/transceiver-message<{NTT}/ntt-manager-message<{NTT}/native-token-transfer>>"
+            ),
             &values,
         )
         .unwrap();
 
     // Should produce the exact same output as "route"
     let reg2 = Registry::load(&schema_dir()).unwrap();
-    let payload2 = reg2
-        .serialize(&format!("{XRPL}/route"), &values)
-        .unwrap();
+    let payload2 = reg2.serialize(&format!("{XRPL}/route"), &values).unwrap();
     assert_eq!(payload, payload2);
 }
 
@@ -315,9 +313,7 @@ fn serialize_with_base58_address() {
         },
     });
 
-    let payload = reg
-        .serialize(&format!("{XRPL}/route"), &values)
-        .unwrap();
+    let payload = reg.serialize(&format!("{XRPL}/route"), &values).unwrap();
     // base58 "11111111111111111111111111111111" = 32 zero bytes
     // custody-account starts at offset 36
     assert_eq!(&payload[36..68], &[0u8; 32]);
@@ -330,7 +326,11 @@ fn missing_required_field_errors() {
     let result = reg.serialize(&format!("{XRPL}/onboard"), &values);
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("missing value"), "error was: {}", err);
+    assert!(err.contains("missing fields"), "error was: {}", err);
+    // All five onboard fields should be listed
+    assert!(err.contains("admin"), "error was: {}", err);
+    assert!(err.contains("app-type"), "error was: {}", err);
+    assert!(err.contains("ticket-count"), "error was: {}", err);
 }
 
 #[test]
@@ -359,7 +359,9 @@ fn param_binding_through_chain() {
     // ntt-manager-message contributes: id, sender
     // native-token-transfer contributes: decimals, amount, source-token, recipient, recipient-chain
     let args = reg
-        .args(&format!("{NTT}/transceiver-message<{NTT}/ntt-manager-message<{NTT}/native-token-transfer>>"))
+        .args(&format!(
+            "{NTT}/transceiver-message<{NTT}/ntt-manager-message<{NTT}/native-token-transfer>>"
+        ))
         .unwrap();
     let names: Vec<&str> = args.iter().map(|a| a.name.as_str()).collect();
     assert_eq!(
@@ -381,9 +383,7 @@ fn param_binding_through_chain() {
 #[test]
 fn args_vaa_body_with_onboard_payload() {
     let reg = Registry::load(&schema_dir()).unwrap();
-    let args = reg
-        .args(&format!("{WH}/vaa-body<{XRPL}/onboard>"))
-        .unwrap();
+    let args = reg.args(&format!("{WH}/vaa-body<{XRPL}/onboard>")).unwrap();
     let names: Vec<&str> = args.iter().map(|a| a.name.as_str()).collect();
     assert_eq!(
         names,
@@ -406,9 +406,7 @@ fn args_vaa_body_with_onboard_payload() {
 #[test]
 fn args_vaa_full_with_onboard_payload() {
     let reg = Registry::load(&schema_dir()).unwrap();
-    let args = reg
-        .args(&format!("{WH}/vaa<{XRPL}/onboard>"))
-        .unwrap();
+    let args = reg.args(&format!("{WH}/vaa<{XRPL}/onboard>")).unwrap();
     let names: Vec<&str> = args.iter().map(|a| a.name.as_str()).collect();
     // header fields + body fields + payload fields
     assert_eq!(
@@ -435,9 +433,7 @@ fn args_vaa_full_with_onboard_payload() {
 #[test]
 fn args_vaa_full_with_route_payload() {
     let reg = Registry::load(&schema_dir()).unwrap();
-    let args = reg
-        .args(&format!("{WH}/vaa<{XRPL}/route>"))
-        .unwrap();
+    let args = reg.args(&format!("{WH}/vaa<{XRPL}/route>")).unwrap();
     let names: Vec<&str> = args.iter().map(|a| a.name.as_str()).collect();
     assert_eq!(
         names,
@@ -858,4 +854,54 @@ fn parse_const_mismatch_rejected() {
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(err.contains("mismatch"), "error was: {}", err);
+}
+
+#[test]
+fn infer_ground_onboard() {
+    let reg = Registry::load(&schema_dir()).unwrap();
+    let values = serde_json::json!({
+        "admin": "0000000000000000000000000000000000000001",
+        "app-type": "NTT",
+        "initial-ticket": "100",
+        "ticket-count": "10",
+        "init-data": "",
+    });
+    let ref_str = format!("{XRPL}/onboard");
+    let payload = reg.serialize(&ref_str, &values).unwrap();
+    let (name, _parsed) = reg.infer(&payload).unwrap();
+    assert_eq!(name, format!("{XRPL}/onboard"));
+}
+
+#[test]
+fn infer_vaa_onboard() {
+    let reg = Registry::load(&schema_dir()).unwrap();
+    let values = serde_json::json!({
+        "guardian-set-index": "4",
+        "signature-count": "0",
+        "timestamp": "1700000000",
+        "nonce": "0",
+        "emitter-chain": "66",
+        "emitter-address": "0000000000000000000000000000000000000000000000000000000000000001",
+        "sequence": "1",
+        "consistency-level": "200",
+        "payload": {
+            "admin": "0000000000000000000000000000000000000001",
+            "app-type": "NTT",
+            "initial-ticket": "100",
+            "ticket-count": "10",
+            "init-data": "",
+        },
+    });
+    let ref_str = format!("{WH}/vaa<{XRPL}/onboard>");
+    let payload = reg.serialize(&ref_str, &values).unwrap();
+    let (name, parsed) = reg.infer(&payload).unwrap();
+    assert!(
+        name.contains("vaa") && name.contains("onboard"),
+        "expected vaa<...onboard...>, got: {}",
+        name
+    );
+    let obj = parsed.as_object().unwrap();
+    assert_eq!(obj["guardian-set-index"].as_str().unwrap(), "4");
+    let inner = obj["payload"].as_object().unwrap();
+    assert_eq!(inner["app-type"].as_str().unwrap(), "NTT");
 }
