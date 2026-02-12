@@ -325,7 +325,7 @@ fn sign_vaa_body(key_hex: &str, index: u8, body: &[u8]) -> Result<[u8; 66]> {
         .map_err(|e| anyhow::anyhow!("invalid secp256k1 key: {}", e))?;
 
     let hash1 = sha3::Keccak256::digest(body);
-    let digest: [u8; 32] = sha3::Keccak256::digest(&hash1).into();
+    let digest: [u8; 32] = sha3::Keccak256::digest(hash1).into();
     let msg = libsecp256k1::Message::parse(&digest);
     let (sig, rec) = libsecp256k1::sign(&msg, &secret);
 
