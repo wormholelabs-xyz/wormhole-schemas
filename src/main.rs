@@ -9,9 +9,9 @@ use wormhole_schemas::Registry;
 #[derive(Parser)]
 #[command(name = "wsch")]
 struct Cli {
-    /// Path to the schemas directory
-    #[arg(long, default_value = "schemas")]
-    schemas: PathBuf,
+    /// Path to additional schemas directory (layered on top of built-in schemas)
+    #[arg(long)]
+    schemas: Option<PathBuf>,
 
     #[command(subcommand)]
     command: Command,
@@ -73,8 +73,11 @@ fn main() {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
-    let reg = Registry::load(&cli.schemas)
-        .with_context(|| format!("loading schemas from {}", cli.schemas.display()))?;
+    let reg = match &cli.schemas {
+        Some(dir) => Registry::builtin_with_overrides(dir)
+            .with_context(|| format!("loading schemas from {}", dir.display()))?,
+        None => Registry::builtin().context("loading built-in schemas")?,
+    };
 
     match cli.command {
         Command::Parse { schema, payload } => cmd_parse(&reg, schema.as_deref(), payload),
@@ -234,7 +237,12 @@ fn read_payload(arg: Option<String>) -> Result<Vec<u8>> {
 }
 
 #[cfg(feature = "sign")]
-fn cmd_sign(guardian_key: &str, guardian_index: u8, format: &str, vaa_arg: Option<String>) -> Result<()> {
+fn cmd_sign(
+    guardian_key: &str,
+    guardian_index: u8,
+    format: &str,
+    vaa_arg: Option<String>,
+) -> Result<()> {
     let raw = read_payload(vaa_arg)?;
 
     // Parse unsigned VAA header
@@ -253,7 +261,12 @@ fn cmd_sign(guardian_key: &str, guardian_index: u8, format: &str, vaa_arg: Optio
     let body_offset = 6 + sig_count * 66;
 
     if raw.len() < body_offset {
-        bail!("VAA truncated: expected at least {} bytes for {} signatures, got {}", body_offset, sig_count, raw.len());
+        bail!(
+            "VAA truncated: expected at least {} bytes for {} signatures, got {}",
+            body_offset,
+            sig_count,
+            raw.len()
+        );
     }
 
     let body = &raw[body_offset..];
@@ -285,7 +298,10 @@ fn cmd_sign(guardian_key: &str, guardian_index: u8, format: &str, vaa_arg: Optio
     match format {
         "base64" | "b64" => {
             use base64::Engine;
-            println!("{}", base64::engine::general_purpose::STANDARD.encode(&signed));
+            println!(
+                "{}",
+                base64::engine::general_purpose::STANDARD.encode(&signed)
+            );
         }
         _ => {
             println!("{}", hex::encode(&signed));

@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use tempfile::TempDir;
 use wormhole_schemas::Registry;
 
 const ZERO_ADDR: &str = "0000000000000000000000000000000000000000000000000000000000000000";
@@ -923,4 +924,105 @@ fn infer_vaa_onboard() {
     assert_eq!(obj["guardian-set-index"].as_str().unwrap(), "4");
     let inner = obj["payload"].as_object().unwrap();
     assert_eq!(inner["app-type"].as_str().unwrap(), "NTT");
+}
+
+// ---------------------------------------------------------------------------
+// Builtin + layering tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn builtin_loads_all_schemas() {
+    let reg = Registry::builtin().unwrap();
+    let names = reg.schemas();
+    // Should contain the same schemas as load()
+    assert!(names.contains(&format!("{XRPL}/onboard").as_str()));
+    assert!(names.contains(&format!("{WH}/vaa").as_str()));
+    assert!(names.contains(&format!("{TB}/transfer").as_str()));
+    assert!(names.contains(&format!("{NTT}/native-token-transfer").as_str()));
+    assert_eq!(names.len(), 28);
+}
+
+#[test]
+fn builtin_serialize_roundtrip() {
+    // Verify builtin schemas actually work for serialize+parse, not just load
+    let reg = Registry::builtin().unwrap();
+    let values = serde_json::json!({
+        "admin": "0000000000000000000000000000000000000001",
+        "app-type": "NTT",
+        "initial-ticket": "100",
+        "ticket-count": "10",
+        "init-data": "",
+    });
+    let ref_str = format!("{XRPL}/onboard");
+    let payload = reg.serialize(&ref_str, &values).unwrap();
+    let parsed = reg.parse(&ref_str, &payload).unwrap();
+    assert_eq!(parsed["app-type"].as_str().unwrap(), "NTT");
+}
+
+#[test]
+fn builtin_with_overrides_adds_new_schema() {
+    let tmp = TempDir::new().unwrap();
+    // Add a custom schema in @custom/project/my-payload.json
+    let org_dir = tmp.path().join("@custom").join("project");
+    std::fs::create_dir_all(&org_dir).unwrap();
+    std::fs::write(
+        org_dir.join("my-payload.json"),
+        r#"[{"name": "tag", "const": "CAFE"}, {"name": "value", "type": "u32"}]"#,
+    )
+    .unwrap();
+
+    let reg = Registry::builtin_with_overrides(tmp.path()).unwrap();
+    let names = reg.schemas();
+
+    // All builtins still present
+    assert!(names.contains(&format!("{XRPL}/onboard").as_str()));
+    assert!(names.contains(&format!("{WH}/vaa").as_str()));
+    // Plus the new one
+    assert!(names.contains(&"@custom/project/my-payload"));
+    assert_eq!(names.len(), 29);
+
+    // The new schema works
+    let values = serde_json::json!({"value": "42"});
+    let payload = reg
+        .serialize("@custom/project/my-payload", &values)
+        .unwrap();
+    assert_eq!(&payload[0..2], &hex::decode("CAFE").unwrap());
+    assert_eq!(&payload[2..6], &42u32.to_be_bytes());
+}
+
+#[test]
+fn builtin_with_overrides_shadows_builtin() {
+    let tmp = TempDir::new().unwrap();
+    // Override the onboard schema with a different "about" and simpler fields
+    let org_dir = tmp.path().join("@wormholelabs-xyz").join("ripple");
+    std::fs::create_dir_all(&org_dir).unwrap();
+    std::fs::write(
+        org_dir.join("onboard.json"),
+        r#"{
+            "about": "Overridden onboard schema",
+            "fields": [
+                {"name": "prefix", "const": "5852504C"},
+                {"name": "value",  "type": "u64"}
+            ]
+        }"#,
+    )
+    .unwrap();
+
+    let reg = Registry::builtin_with_overrides(tmp.path()).unwrap();
+
+    // The override should replace the builtin
+    let schema = reg.get(&format!("{XRPL}/onboard")).unwrap();
+    assert_eq!(schema.about.as_deref(), Some("Overridden onboard schema"));
+
+    // It should serialize with the overridden layout (4 prefix + 8 u64 = 12 bytes)
+    let values = serde_json::json!({"value": "99"});
+    let payload = reg.serialize(&format!("{XRPL}/onboard"), &values).unwrap();
+    assert_eq!(payload.len(), 12);
+    assert_eq!(&payload[0..4], &hex::decode("5852504C").unwrap());
+    assert_eq!(&payload[4..12], &99u64.to_be_bytes());
+
+    // Other builtins still work
+    let names = reg.schemas();
+    assert!(names.contains(&format!("{WH}/vaa").as_str()));
+    assert!(names.contains(&format!("{TB}/transfer").as_str()));
 }
