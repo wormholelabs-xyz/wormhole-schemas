@@ -18,6 +18,7 @@ serde_json = { version = "1", features = ["preserve_order"] }
 ureq = { version = "2", features = ["json"], optional = true }
 bs58 = "0.5"
 hex = "0.4"
+ethnum = "1"
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }
 libsecp256k1 = { version = "0.7", optional = true }

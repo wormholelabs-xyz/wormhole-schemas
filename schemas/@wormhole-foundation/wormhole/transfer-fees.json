@@ -4,7 +4,7 @@
     {"name": "module",     "const": "00000000000000000000000000000000000000000000000000000000436f7265"},
     {"name": "action",     "const": "04"},
     {"name": "chain-id",   "type": "u16"},
-    {"name": "amount",     "type": "bytes32", "help": "u256 big-endian amount to transfer"},
+    {"name": "amount",     "type": "u256", "help": "amount to transfer"},
     {"name": "recipient",  "type": "address"}
   ]
 }

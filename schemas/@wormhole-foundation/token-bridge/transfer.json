@@ -2,11 +2,11 @@
   "about": "Token Bridge transfer (payload ID 1)",
   "fields": [
     {"name": "payload-id",     "const": "01"},
-    {"name": "amount",         "type": "bytes32", "help": "u256 big-endian transfer amount (truncated to 8 decimals)"},
+    {"name": "amount",         "type": "u256", "help": "transfer amount (truncated to 8 decimals)"},
     {"name": "token-address",  "type": "address"},
     {"name": "token-chain",    "type": "u16"},
     {"name": "to",             "type": "address"},
     {"name": "to-chain",       "type": "u16"},
-    {"name": "fee",            "type": "bytes32", "help": "u256 big-endian relayer fee (must be < amount)"}
+    {"name": "fee",            "type": "u256", "help": "relayer fee (must be < amount)"}
   ]
 }

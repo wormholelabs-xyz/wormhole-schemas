@@ -78,6 +78,11 @@ pub fn parse_field(field_type: &FieldType, cursor: &mut Cursor) -> Result<String
             let b = cursor.read_bytes(8)?;
             Ok(u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]).to_string())
         }
+        FieldType::U256 => {
+            let b = cursor.read_bytes(32)?;
+            let n = ethnum::U256::from_be_bytes(b.try_into().unwrap());
+            Ok(n.to_string())
+        }
         FieldType::Address => {
             let b = cursor.read_bytes(32)?;
             Ok(hex::encode(b))
@@ -187,5 +192,40 @@ mod tests {
         let mut c = Cursor::new(&data);
         let s = parse_field(&FieldType::Bytes(20), &mut c).unwrap();
         assert_eq!(s.len(), 40);
+    }
+
+    #[test]
+    fn parse_u256_zero() {
+        let mut c = Cursor::new(&[0u8; 32]);
+        assert_eq!(parse_field(&FieldType::U256, &mut c).unwrap(), "0");
+    }
+
+    #[test]
+    fn parse_u256_small() {
+        let mut data = [0u8; 32];
+        data[31] = 100;
+        let mut c = Cursor::new(&data);
+        assert_eq!(parse_field(&FieldType::U256, &mut c).unwrap(), "100");
+    }
+
+    #[test]
+    fn parse_u256_large() {
+        // 100000000 = 0x05f5e100
+        let mut data = [0u8; 32];
+        data[28] = 0x05;
+        data[29] = 0xf5;
+        data[30] = 0xe1;
+        data[31] = 0x00;
+        let mut c = Cursor::new(&data);
+        assert_eq!(parse_field(&FieldType::U256, &mut c).unwrap(), "100000000");
+    }
+
+    #[test]
+    fn parse_u256_max() {
+        let mut c = Cursor::new(&[0xFF; 32]);
+        assert_eq!(
+            parse_field(&FieldType::U256, &mut c).unwrap(),
+            "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+        );
     }
 }

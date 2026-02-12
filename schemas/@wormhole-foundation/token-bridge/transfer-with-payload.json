@@ -2,7 +2,7 @@
   "about": "Token Bridge transfer with arbitrary payload (payload ID 3)",
   "fields": [
     {"name": "payload-id",     "const": "03"},
-    {"name": "amount",         "type": "bytes32", "help": "u256 big-endian transfer amount (truncated to 8 decimals)"},
+    {"name": "amount",         "type": "u256", "help": "transfer amount (truncated to 8 decimals)"},
     {"name": "token-address",  "type": "address"},
     {"name": "token-chain",    "type": "u16"},
     {"name": "to",             "type": "address"},
