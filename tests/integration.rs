@@ -568,6 +568,41 @@ fn serialize_full_vaa_onboard() {
 }
 
 #[test]
+fn serialize_vaa_with_qualified_arg() {
+    // Regression: `vaa<@wormholelabs-xyz/ripple/onboard>` used to fail with
+    // "invalid ref format: @this/@wormholelabs-xyz/ripple/onboard" because
+    // resolve_short_name blindly prepended @this/ to already-qualified refs.
+    let reg = Registry::load(&schema_dir()).unwrap();
+    let values = serde_json::json!({
+        "guardian-set-index": "4",
+        "signature-count": "0",
+        "timestamp": "1700000000",
+        "nonce": "0",
+        "emitter-chain": "66",
+        "emitter-address": "0000000000000000000000000000000000000000000000000000000000000001",
+        "sequence": "1",
+        "consistency-level": "200",
+        "payload": {
+            "admin": "0000000000000000000000000000000000000001",
+            "app-type": "NTT",
+            "initial-ticket": "100",
+            "ticket-count": "10",
+            "init-data": "",
+        },
+    });
+
+    // Short base name + fully-qualified arg
+    let a = reg
+        .serialize("vaa<@wormholelabs-xyz/ripple/onboard>", &values)
+        .unwrap();
+    // Fully-qualified everything
+    let b = reg
+        .serialize(&format!("{WH}/vaa<{XRPL}/onboard>"), &values)
+        .unwrap();
+    assert_eq!(a, b);
+}
+
+#[test]
 fn serialize_vaa_with_signatures() {
     let reg = Registry::load(&schema_dir()).unwrap();
     let values = serde_json::json!({

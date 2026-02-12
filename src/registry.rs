@@ -382,6 +382,11 @@ impl Registry {
     /// Resolve a bare name (like `onboard` or `vaa<onboard>`) to a fully
     /// scoped ref string by matching against loaded schema names.
     fn resolve_short_name(&self, name: &str) -> String {
+        // Already fully qualified — return as-is
+        if name.starts_with('@') {
+            return name.to_string();
+        }
+
         // Extract the base name (before any angle brackets)
         let base = name.split('<').next().unwrap_or(name);
 
