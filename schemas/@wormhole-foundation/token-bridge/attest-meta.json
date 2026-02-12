@@ -1,0 +1,11 @@
+{
+  "about": "Token Bridge asset metadata attestation (payload ID 2)",
+  "fields": [
+    {"name": "payload-id",     "const": "02"},
+    {"name": "token-address",  "type": "address"},
+    {"name": "token-chain",    "type": "u16"},
+    {"name": "decimals",       "type": "u8"},
+    {"name": "symbol",         "type": "string32"},
+    {"name": "name",           "type": "string32"}
+  ]
+}

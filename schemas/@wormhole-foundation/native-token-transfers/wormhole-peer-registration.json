@@ -1,0 +1,8 @@
+{
+  "about": "NTT Wormhole transceiver peer registration",
+  "fields": [
+    {"name": "prefix",         "const": "18fc67c2"},
+    {"name": "peer-chain-id",  "type": "u16"},
+    {"name": "peer-address",   "type": "address"}
+  ]
+}

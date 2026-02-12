@@ -1,0 +1,9 @@
+{
+  "about": "Core bridge governance: set the message fee",
+  "fields": [
+    {"name": "module",       "const": "00000000000000000000000000000000000000000000000000000000436f7265"},
+    {"name": "action",       "const": "03"},
+    {"name": "chain-id",     "type": "u16"},
+    {"name": "message-fee",  "type": "bytes32", "help": "u256 big-endian fee amount in native token smallest units"}
+  ]
+}

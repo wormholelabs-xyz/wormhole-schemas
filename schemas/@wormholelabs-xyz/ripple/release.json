@@ -1,0 +1,15 @@
+{
+  "about": "XRPL release payload — emitted when a ticket is assigned to an inbound transfer",
+  "fields": [
+    {"name": "prefix",               "const": "5852454C"},
+    {"name": "ticket-id",            "type": "u64"},
+    {"name": "xrpl-custody-account", "type": "bytes20"},
+    {"name": "xrpl-recipient",       "type": "bytes20"},
+    {"name": "amount",               "type": "u64"},
+    {"name": "token-decimals",       "type": "u8"},
+    {"name": "source-chain",         "type": "u16"},
+    {"name": "source-emitter",       "type": "address"},
+    {"name": "source-sequence",      "type": "u64"},
+    {"name": "token-id",             "type": "hex"}
+  ]
+}

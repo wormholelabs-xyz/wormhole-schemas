@@ -1,0 +1,9 @@
+{
+  "about": "XRPL ticket refill payload — emitted when tickets are running low",
+  "fields": [
+    {"name": "prefix",        "const": "5852464C"},
+    {"name": "xrpl-account",  "type": "bytes20"},
+    {"name": "use-ticket",    "type": "u64"},
+    {"name": "request-count", "type": "u64"}
+  ]
+}

@@ -6,6 +6,7 @@ const ZERO_ADDR: &str = "0000000000000000000000000000000000000000000000000000000
 const XRPL: &str = "@wormholelabs-xyz/ripple";
 const NTT: &str = "@wormhole-foundation/native-token-transfers";
 const WH: &str = "@wormhole-foundation/wormhole";
+const TB: &str = "@wormhole-foundation/token-bridge";
 
 fn schema_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("schemas")
@@ -29,7 +30,25 @@ fn load_all_schemas() {
     assert!(names.contains(&format!("{NTT}/empty").as_str()));
     assert!(names.contains(&format!("{NTT}/hex-payload").as_str()));
     assert!(names.contains(&format!("{NTT}/ntt").as_str()));
-    assert_eq!(names.len(), 14);
+    // Ripple: release, ticket-refill
+    assert!(names.contains(&format!("{XRPL}/release").as_str()));
+    assert!(names.contains(&format!("{XRPL}/ticket-refill").as_str()));
+    // Token Bridge
+    assert!(names.contains(&format!("{TB}/transfer").as_str()));
+    assert!(names.contains(&format!("{TB}/attest-meta").as_str()));
+    assert!(names.contains(&format!("{TB}/transfer-with-payload").as_str()));
+    assert!(names.contains(&format!("{TB}/register-chain").as_str()));
+    assert!(names.contains(&format!("{TB}/upgrade-contract").as_str()));
+    // Core governance
+    assert!(names.contains(&format!("{WH}/guardian-key").as_str()));
+    assert!(names.contains(&format!("{WH}/contract-upgrade").as_str()));
+    assert!(names.contains(&format!("{WH}/guardian-set-update").as_str()));
+    assert!(names.contains(&format!("{WH}/set-message-fee").as_str()));
+    assert!(names.contains(&format!("{WH}/transfer-fees").as_str()));
+    // NTT transceiver
+    assert!(names.contains(&format!("{NTT}/wormhole-transceiver-init").as_str()));
+    assert!(names.contains(&format!("{NTT}/wormhole-peer-registration").as_str()));
+    assert_eq!(names.len(), 28);
 }
 
 #[test]
