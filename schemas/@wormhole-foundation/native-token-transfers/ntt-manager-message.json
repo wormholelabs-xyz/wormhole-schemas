@@ -1,0 +1,9 @@
+{
+  "params": ["A"],
+  "fields": [
+    {"name": "id",     "type": "address"},
+    {"name": "sender", "type": "address"},
+    {"length_prefix": "u16"},
+    {"name": "payload", "ref": "A"}
+  ]
+}

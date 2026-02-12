@@ -1,0 +1,4 @@
+[
+  {"name": "guardian-index", "type": "u8"},
+  {"name": "signature",     "type": "bytes65"}
+]

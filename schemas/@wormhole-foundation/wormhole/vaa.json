@@ -1,0 +1,8 @@
+{
+  "about": "Complete Wormhole VAA (header + body)",
+  "params": ["A"],
+  "fields": [
+    {"ref": "@this/vaa-header"},
+    {"ref": "@this/vaa-body<A>"}
+  ]
+}

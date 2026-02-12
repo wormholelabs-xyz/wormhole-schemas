@@ -1,0 +1,20 @@
+[package]
+name = "wormhole-schemas"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+fetch = ["ureq"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "2", features = ["json"], optional = true }
+bs58 = "0.5"
+hex = "0.4"
+anyhow = "1"
+
+[dev-dependencies]
+tempfile = "3"
+hex = "0.4"

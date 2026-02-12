@@ -1,0 +1,13 @@
+{
+  "about": "Wormhole VAA body (the part that gets signed)",
+  "params": ["A"],
+  "fields": [
+    {"name": "timestamp",         "type": "u32"},
+    {"name": "nonce",             "type": "u32"},
+    {"name": "emitter-chain",     "type": "u16"},
+    {"name": "emitter-address",   "type": "address"},
+    {"name": "sequence",          "type": "u64"},
+    {"name": "consistency-level", "type": "u8"},
+    {"name": "payload", "ref": "A"}
+  ]
+}

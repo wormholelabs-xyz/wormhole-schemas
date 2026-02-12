@@ -1,0 +1,4 @@
+{
+  "about": "Send an NTT transfer to XRPL",
+  "ref": "@wormhole-foundation/native-token-transfers/ntt"
+}

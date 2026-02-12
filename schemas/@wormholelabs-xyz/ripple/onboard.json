@@ -1,0 +1,11 @@
+{
+  "about": "Initialize a new XRPL account",
+  "fields": [
+    {"name": "prefix",          "const": "5852504C"},
+    {"name": "admin",           "type": "bytes20"},
+    {"name": "app-type",        "type": "string32"},
+    {"name": "initial-ticket",  "type": "u64"},
+    {"name": "ticket-count",    "type": "u64"},
+    {"name": "init-data",       "type": "hex"}
+  ]
+}

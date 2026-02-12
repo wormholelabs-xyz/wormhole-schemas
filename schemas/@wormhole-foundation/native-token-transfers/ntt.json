@@ -1,0 +1,4 @@
+{
+  "about": "NTT transceiver message wrapping a manager message with native token transfer",
+  "ref": "@this/transceiver-message<@this/ntt-manager-message<@this/native-token-transfer>>"
+}

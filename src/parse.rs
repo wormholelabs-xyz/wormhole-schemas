@@ -1,0 +1,191 @@
+use anyhow::{bail, Context, Result};
+
+use crate::schema::FieldType;
+
+/// A cursor over a byte slice for sequential parsing.
+pub struct Cursor<'a> {
+    data: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> Cursor<'a> {
+    pub fn new(data: &'a [u8]) -> Self {
+        Self { data, pos: 0 }
+    }
+
+    pub fn remaining(&self) -> usize {
+        self.data.len() - self.pos
+    }
+
+    pub fn position(&self) -> usize {
+        self.pos
+    }
+
+    pub fn read_bytes(&mut self, n: usize) -> Result<&'a [u8]> {
+        if self.pos + n > self.data.len() {
+            bail!(
+                "unexpected end of data at offset {}: need {} bytes, have {}",
+                self.pos,
+                n,
+                self.remaining()
+            );
+        }
+        let slice = &self.data[self.pos..self.pos + n];
+        self.pos += n;
+        Ok(slice)
+    }
+
+    pub fn read_remaining(&mut self) -> &'a [u8] {
+        let slice = &self.data[self.pos..];
+        self.pos = self.data.len();
+        slice
+    }
+
+    /// Carve out the next `n` bytes as a new bounded cursor.
+    pub fn sub_cursor(&mut self, n: usize) -> Result<Cursor<'a>> {
+        let bytes = self.read_bytes(n)?;
+        Ok(Cursor::new(bytes))
+    }
+
+    pub fn assert_exhausted(&self) -> Result<()> {
+        if self.remaining() > 0 {
+            bail!(
+                "{} unexpected trailing bytes at offset {}",
+                self.remaining(),
+                self.pos
+            );
+        }
+        Ok(())
+    }
+}
+
+/// Parse a single typed field from the cursor, returning a string representation.
+pub fn parse_field(field_type: &FieldType, cursor: &mut Cursor) -> Result<String> {
+    match field_type {
+        FieldType::U8 => {
+            let b = cursor.read_bytes(1)?;
+            Ok(b[0].to_string())
+        }
+        FieldType::U16 => {
+            let b = cursor.read_bytes(2)?;
+            Ok(u16::from_be_bytes([b[0], b[1]]).to_string())
+        }
+        FieldType::U32 => {
+            let b = cursor.read_bytes(4)?;
+            Ok(u32::from_be_bytes([b[0], b[1], b[2], b[3]]).to_string())
+        }
+        FieldType::U64 => {
+            let b = cursor.read_bytes(8)?;
+            Ok(u64::from_be_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]).to_string())
+        }
+        FieldType::Address => {
+            let b = cursor.read_bytes(32)?;
+            Ok(hex::encode(b))
+        }
+        FieldType::String32 => {
+            let b = cursor.read_bytes(32)?;
+            // Strip left zero-padding, return ASCII
+            let start = b.iter().position(|&x| x != 0).unwrap_or(32);
+            let s = std::str::from_utf8(&b[start..]).context("string32 contains non-UTF8 bytes")?;
+            Ok(s.to_string())
+        }
+        FieldType::Hex => {
+            let b = cursor.read_remaining();
+            Ok(hex::encode(b))
+        }
+        FieldType::Bytes(n) => {
+            let b = cursor.read_bytes(*n)?;
+            Ok(hex::encode(b))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cursor_read_bytes() {
+        let mut c = Cursor::new(&[1, 2, 3, 4]);
+        assert_eq!(c.read_bytes(2).unwrap(), &[1, 2]);
+        assert_eq!(c.position(), 2);
+        assert_eq!(c.remaining(), 2);
+        assert_eq!(c.read_bytes(2).unwrap(), &[3, 4]);
+        c.assert_exhausted().unwrap();
+    }
+
+    #[test]
+    fn cursor_read_past_end() {
+        let mut c = Cursor::new(&[1]);
+        assert!(c.read_bytes(2).is_err());
+    }
+
+    #[test]
+    fn cursor_sub_cursor() {
+        let mut c = Cursor::new(&[1, 2, 3, 4, 5]);
+        let mut sub = c.sub_cursor(3).unwrap();
+        assert_eq!(sub.read_bytes(2).unwrap(), &[1, 2]);
+        assert_eq!(sub.remaining(), 1);
+        // outer cursor advanced past the 3 bytes
+        assert_eq!(c.remaining(), 2);
+    }
+
+    #[test]
+    fn parse_u8() {
+        let mut c = Cursor::new(&[42]);
+        assert_eq!(parse_field(&FieldType::U8, &mut c).unwrap(), "42");
+    }
+
+    #[test]
+    fn parse_u16() {
+        let mut c = Cursor::new(&[1, 0]);
+        assert_eq!(parse_field(&FieldType::U16, &mut c).unwrap(), "256");
+    }
+
+    #[test]
+    fn parse_u64() {
+        let mut c = Cursor::new(&[0, 0, 0, 0, 0, 0, 0, 1]);
+        assert_eq!(parse_field(&FieldType::U64, &mut c).unwrap(), "1");
+    }
+
+    #[test]
+    fn parse_address() {
+        let mut data = [0u8; 32];
+        data[31] = 0xAB;
+        let mut c = Cursor::new(&data);
+        let s = parse_field(&FieldType::Address, &mut c).unwrap();
+        assert_eq!(s.len(), 64);
+        assert!(s.ends_with("ab"));
+        assert!(s.starts_with("000000"));
+    }
+
+    #[test]
+    fn parse_string32() {
+        let mut data = [0u8; 32];
+        data[29] = b'N';
+        data[30] = b'T';
+        data[31] = b'T';
+        let mut c = Cursor::new(&data);
+        assert_eq!(parse_field(&FieldType::String32, &mut c).unwrap(), "NTT");
+    }
+
+    #[test]
+    fn parse_hex_empty() {
+        let mut c = Cursor::new(&[]);
+        assert_eq!(parse_field(&FieldType::Hex, &mut c).unwrap(), "");
+    }
+
+    #[test]
+    fn parse_hex_nonempty() {
+        let mut c = Cursor::new(&[0xAA, 0xBB]);
+        assert_eq!(parse_field(&FieldType::Hex, &mut c).unwrap(), "aabb");
+    }
+
+    #[test]
+    fn parse_bytes20() {
+        let data = [0u8; 20];
+        let mut c = Cursor::new(&data);
+        let s = parse_field(&FieldType::Bytes(20), &mut c).unwrap();
+        assert_eq!(s.len(), 40);
+    }
+}
