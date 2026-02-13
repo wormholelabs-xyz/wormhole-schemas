@@ -3,7 +3,7 @@
   "fields": [
     {"name": "payload-id",     "const": "02"},
     {"name": "token-address",  "type": "address"},
-    {"name": "token-chain",    "type": "u16"},
+    {"name": "token-chain",    "type": "u16be"},
     {"name": "decimals",       "type": "u8"},
     {"name": "symbol",         "type": "string32"},
     {"name": "name",           "type": "string32"}

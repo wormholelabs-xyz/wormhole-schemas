@@ -4,7 +4,7 @@
     {"name": "prefix",           "const": "9945FF10"},
     {"name": "source-ntt-manager", "type": "address"},
     {"name": "custody-account",    "type": "address"},
-    {"length_prefix": "u16"},
+    {"length_prefix": "u16be"},
     {"name": "payload", "ref": "A"},
     {"name": "trailing",         "const": "0000"}
   ]

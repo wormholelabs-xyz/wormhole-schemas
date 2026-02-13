@@ -3,8 +3,8 @@
   "fields": [
     {"name": "module",         "const": "00000000000000000000000000000000000000000000000000000000436f7265"},
     {"name": "action",         "const": "02"},
-    {"name": "chain-id",       "type": "u16"},
-    {"name": "new-index",      "type": "u32"},
+    {"name": "chain-id",       "type": "u16be"},
+    {"name": "new-index",      "type": "u32be"},
     {"name": "num-guardians",  "type": "u8"},
     {"name": "guardians",      "repeat": "num-guardians", "ref": "@this/guardian-key"}
   ]

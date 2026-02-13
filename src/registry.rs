@@ -898,7 +898,7 @@ impl Registry {
 
                     // Write the length
                     match size_type.as_str() {
-                        "u16" => {
+                        "u16be" => {
                             let len: u16 = inner_buf.len().try_into().with_context(|| {
                                 format!(
                                     "payload too large for u16 length prefix: {}",
@@ -1047,7 +1047,7 @@ impl Registry {
                 Field::LengthPrefix(size_type) => {
                     // Read the length, create a sub-cursor, parse the next Ref within it
                     let len: usize = match size_type.as_str() {
-                        "u16" => {
+                        "u16be" => {
                             let b = cursor.read_bytes(2)?;
                             u16::from_be_bytes([b[0], b[1]]) as usize
                         }

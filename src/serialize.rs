@@ -19,29 +19,53 @@ pub fn serialize_field(field_type: &FieldType, value: &str, output: &mut Vec<u8>
                 .with_context(|| format!("invalid u8: {}", value))?;
             output.push(n);
         }
-        FieldType::U16 => {
+        FieldType::U16Be => {
             let n: u16 = value
                 .parse()
-                .with_context(|| format!("invalid u16: {}", value))?;
+                .with_context(|| format!("invalid u16be: {}", value))?;
             output.extend_from_slice(&n.to_be_bytes());
         }
-        FieldType::U32 => {
+        FieldType::U16Le => {
+            let n: u16 = value
+                .parse()
+                .with_context(|| format!("invalid u16le: {}", value))?;
+            output.extend_from_slice(&n.to_le_bytes());
+        }
+        FieldType::U32Be => {
             let n: u32 = value
                 .parse()
-                .with_context(|| format!("invalid u32: {}", value))?;
+                .with_context(|| format!("invalid u32be: {}", value))?;
             output.extend_from_slice(&n.to_be_bytes());
         }
-        FieldType::U64 => {
+        FieldType::U32Le => {
+            let n: u32 = value
+                .parse()
+                .with_context(|| format!("invalid u32le: {}", value))?;
+            output.extend_from_slice(&n.to_le_bytes());
+        }
+        FieldType::U64Be => {
             let n: u64 = value
                 .parse()
-                .with_context(|| format!("invalid u64: {}", value))?;
+                .with_context(|| format!("invalid u64be: {}", value))?;
             output.extend_from_slice(&n.to_be_bytes());
         }
-        FieldType::U256 => {
+        FieldType::U64Le => {
+            let n: u64 = value
+                .parse()
+                .with_context(|| format!("invalid u64le: {}", value))?;
+            output.extend_from_slice(&n.to_le_bytes());
+        }
+        FieldType::U256Be => {
             let n: ethnum::U256 = value
                 .parse()
-                .map_err(|_| anyhow::anyhow!("invalid u256: {}", value))?;
+                .map_err(|_| anyhow::anyhow!("invalid u256be: {}", value))?;
             output.extend_from_slice(&n.to_be_bytes());
+        }
+        FieldType::U256Le => {
+            let n: ethnum::U256 = value
+                .parse()
+                .map_err(|_| anyhow::anyhow!("invalid u256le: {}", value))?;
+            output.extend_from_slice(&n.to_le_bytes());
         }
         FieldType::Address => {
             let bytes = parse_address(value)?;
@@ -148,17 +172,38 @@ mod tests {
     }
 
     #[test]
-    fn serialize_u16() {
+    fn serialize_u16be() {
         let mut out = Vec::new();
-        serialize_field(&FieldType::U16, "256", &mut out).unwrap();
+        serialize_field(&FieldType::U16Be, "256", &mut out).unwrap();
         assert_eq!(out, vec![1, 0]);
     }
 
     #[test]
-    fn serialize_u64() {
+    fn serialize_u16le() {
         let mut out = Vec::new();
-        serialize_field(&FieldType::U64, "1", &mut out).unwrap();
+        serialize_field(&FieldType::U16Le, "256", &mut out).unwrap();
+        assert_eq!(out, vec![0, 1]);
+    }
+
+    #[test]
+    fn serialize_u32le() {
+        let mut out = Vec::new();
+        serialize_field(&FieldType::U32Le, "1", &mut out).unwrap();
+        assert_eq!(out, vec![1, 0, 0, 0]);
+    }
+
+    #[test]
+    fn serialize_u64be() {
+        let mut out = Vec::new();
+        serialize_field(&FieldType::U64Be, "1", &mut out).unwrap();
         assert_eq!(out, vec![0, 0, 0, 0, 0, 0, 0, 1]);
+    }
+
+    #[test]
+    fn serialize_u64le() {
+        let mut out = Vec::new();
+        serialize_field(&FieldType::U64Le, "1", &mut out).unwrap();
+        assert_eq!(out, vec![1, 0, 0, 0, 0, 0, 0, 0]);
     }
 
     #[test]
@@ -219,16 +264,16 @@ mod tests {
     }
 
     #[test]
-    fn serialize_u256_zero() {
+    fn serialize_u256be_zero() {
         let mut out = Vec::new();
-        serialize_field(&FieldType::U256, "0", &mut out).unwrap();
+        serialize_field(&FieldType::U256Be, "0", &mut out).unwrap();
         assert_eq!(out, vec![0u8; 32]);
     }
 
     #[test]
-    fn serialize_u256_small() {
+    fn serialize_u256be_small() {
         let mut out = Vec::new();
-        serialize_field(&FieldType::U256, "100000000", &mut out).unwrap();
+        serialize_field(&FieldType::U256Be, "100000000", &mut out).unwrap();
         assert_eq!(out.len(), 32);
         // 100000000 = 0x05f5e100
         assert_eq!(&out[28..], &[0x05, 0xf5, 0xe1, 0x00]);
@@ -236,10 +281,10 @@ mod tests {
     }
 
     #[test]
-    fn serialize_u256_max() {
+    fn serialize_u256be_max() {
         let mut out = Vec::new();
         serialize_field(
-            &FieldType::U256,
+            &FieldType::U256Be,
             "115792089237316195423570985008687907853269984665640564039457584007913129639935",
             &mut out,
         )
@@ -248,9 +293,19 @@ mod tests {
     }
 
     #[test]
-    fn serialize_u256_invalid() {
+    fn serialize_u256be_invalid() {
         let mut out = Vec::new();
-        assert!(serialize_field(&FieldType::U256, "not_a_number", &mut out).is_err());
+        assert!(serialize_field(&FieldType::U256Be, "not_a_number", &mut out).is_err());
+    }
+
+    #[test]
+    fn serialize_u256le_small() {
+        let mut out = Vec::new();
+        serialize_field(&FieldType::U256Le, "100000000", &mut out).unwrap();
+        assert_eq!(out.len(), 32);
+        // 100000000 = 0x05f5e100 — LE: least significant byte first
+        assert_eq!(&out[..4], &[0x00, 0xe1, 0xf5, 0x05]);
+        assert_eq!(&out[4..], &[0u8; 28]);
     }
 
     #[test]

@@ -147,7 +147,7 @@ A schema defines an ordered list of binary fields:
   "fields": [
     {"name": "payload-id",    "const": "02"},
     {"name": "token-address", "type": "address"},
-    {"name": "token-chain",   "type": "u16"},
+    {"name": "token-chain",   "type": "u16be"},
     {"name": "decimals",      "type": "u8"},
     {"name": "symbol",        "type": "string32"},
     {"name": "name",          "type": "string32"}
@@ -159,8 +159,11 @@ A schema defines an ordered list of binary fields:
 
 | Type | Encoding |
 |------|----------|
-| `u8`, `u16`, `u32`, `u64` | Big-endian unsigned integer |
-| `u256` | 32-byte big-endian unsigned integer (decimal string) |
+| `u8` | Unsigned 8-bit integer |
+| `u16be`, `u32be`, `u64be` | Big-endian unsigned integer |
+| `u16le`, `u32le`, `u64le` | Little-endian unsigned integer |
+| `u256be` | 32-byte big-endian unsigned integer (decimal string) |
+| `u256le` | 32-byte little-endian unsigned integer (decimal string) |
 | `address` | 32-byte Wormhole address (hex or base58 input) |
 | `bytesN` | Fixed N-byte field |
 | `string32` | UTF-8 string left-padded with zeros to 32 bytes |
@@ -168,7 +171,7 @@ A schema defines an ordered list of binary fields:
 
 ### Field variants
 
-- **`{"name": "x", "type": "u32"}`** -- named typed field
+- **`{"name": "x", "type": "u32be"}`** -- named typed field
 - **`{"name": "x", "const": "DEADBEEF"}`** -- constant (verified on parse, auto-filled on build)
 - **`{"ref": "@org/repo/schema"}`** -- inline another schema's fields
 - **`{"name": "x", "ref": "@org/repo/schema"}`** -- nested schema under a named JSON key

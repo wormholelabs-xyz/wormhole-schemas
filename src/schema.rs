@@ -11,10 +11,14 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldType {
     U8,
-    U16,
-    U32,
-    U64,
-    U256,
+    U16Be,
+    U16Le,
+    U32Be,
+    U32Le,
+    U64Be,
+    U64Le,
+    U256Be,
+    U256Le,
     Address,
     String32,
     Hex,
@@ -25,10 +29,14 @@ impl FieldType {
     pub fn from_type_str(s: &str) -> Result<Self, String> {
         match s {
             "u8" => Ok(FieldType::U8),
-            "u16" => Ok(FieldType::U16),
-            "u32" => Ok(FieldType::U32),
-            "u64" => Ok(FieldType::U64),
-            "u256" => Ok(FieldType::U256),
+            "u16be" => Ok(FieldType::U16Be),
+            "u16le" => Ok(FieldType::U16Le),
+            "u32be" => Ok(FieldType::U32Be),
+            "u32le" => Ok(FieldType::U32Le),
+            "u64be" => Ok(FieldType::U64Be),
+            "u64le" => Ok(FieldType::U64Le),
+            "u256be" => Ok(FieldType::U256Be),
+            "u256le" => Ok(FieldType::U256Le),
             "address" => Ok(FieldType::Address),
             "string32" => Ok(FieldType::String32),
             "hex" => Ok(FieldType::Hex),
@@ -47,10 +55,14 @@ impl fmt::Display for FieldType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             FieldType::U8 => write!(f, "u8"),
-            FieldType::U16 => write!(f, "u16"),
-            FieldType::U32 => write!(f, "u32"),
-            FieldType::U64 => write!(f, "u64"),
-            FieldType::U256 => write!(f, "u256"),
+            FieldType::U16Be => write!(f, "u16be"),
+            FieldType::U16Le => write!(f, "u16le"),
+            FieldType::U32Be => write!(f, "u32be"),
+            FieldType::U32Le => write!(f, "u32le"),
+            FieldType::U64Be => write!(f, "u64be"),
+            FieldType::U64Le => write!(f, "u64le"),
+            FieldType::U256Be => write!(f, "u256be"),
+            FieldType::U256Le => write!(f, "u256le"),
             FieldType::Address => write!(f, "address"),
             FieldType::String32 => write!(f, "string32"),
             FieldType::Hex => write!(f, "hex"),
@@ -365,7 +377,7 @@ mod tests {
     fn reject_duplicate_field_names() {
         let json = serde_json::json!([
             {"name": "x", "type": "u8"},
-            {"name": "x", "type": "u16"}
+            {"name": "x", "type": "u16be"}
         ]);
         let err = parse_schema(json).unwrap_err().to_string();
         assert!(err.contains("duplicate field name"), "error was: {}", err);
@@ -374,7 +386,7 @@ mod tests {
     #[test]
     fn reject_length_prefix_at_end() {
         let json = serde_json::json!([
-            {"length_prefix": "u16"}
+            {"length_prefix": "u16be"}
         ]);
         let err = parse_schema(json).unwrap_err().to_string();
         assert!(

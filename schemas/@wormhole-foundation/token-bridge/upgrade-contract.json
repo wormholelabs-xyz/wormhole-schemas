@@ -3,7 +3,7 @@
   "fields": [
     {"name": "module",        "const": "000000000000000000000000000000000000000000546f6b656e427269646765"},
     {"name": "action",        "const": "02"},
-    {"name": "chain-id",      "type": "u16"},
+    {"name": "chain-id",      "type": "u16be"},
     {"name": "new-contract",  "type": "address"}
   ]
 }

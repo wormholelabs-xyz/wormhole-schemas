@@ -3,7 +3,7 @@
   "fields": [
     {"name": "id",     "type": "address"},
     {"name": "sender", "type": "address"},
-    {"length_prefix": "u16"},
+    {"length_prefix": "u16be"},
     {"name": "payload", "ref": "A"}
   ]
 }

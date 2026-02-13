@@ -4,7 +4,7 @@
     {"name": "prefix",          "const": "5841444D"},
     {"name": "action",          "const": "01"},
     {"name": "target-account",  "type": "bytes20"},
-    {"name": "chain-id",        "type": "u16"},
+    {"name": "chain-id",        "type": "u16be"},
     {"name": "peer-address",    "type": "address"}
   ]
 }

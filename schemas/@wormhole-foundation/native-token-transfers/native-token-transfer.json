@@ -1,8 +1,8 @@
 [
   {"name": "prefix",          "const": "994E5454"},
   {"name": "decimals",        "type": "u8"},
-  {"name": "amount",          "type": "u64"},
+  {"name": "amount",          "type": "u64be"},
   {"name": "source-token",    "type": "address"},
   {"name": "recipient",       "type": "address"},
-  {"name": "recipient-chain", "type": "u16"}
+  {"name": "recipient-chain", "type": "u16be"}
 ]

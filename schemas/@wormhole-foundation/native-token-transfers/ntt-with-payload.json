@@ -3,7 +3,7 @@
   "params": ["A"],
   "fields": [
     {"ref": "@this/native-token-transfer"},
-    {"length_prefix": "u16"},
+    {"length_prefix": "u16be"},
     {"ref": "A"}
   ]
 }

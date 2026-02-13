@@ -1,6 +1,6 @@
 [
   {"name": "version",            "const": "01"},
-  {"name": "guardian-set-index", "type": "u32"},
+  {"name": "guardian-set-index", "type": "u32be"},
   {"name": "signature-count",   "type": "u8"},
   {"name": "signatures",         "repeat": "signature-count", "ref": "@this/guardian-signature"}
 ]

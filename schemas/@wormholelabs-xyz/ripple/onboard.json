@@ -4,8 +4,8 @@
     {"name": "prefix",          "const": "5852504C"},
     {"name": "admin",           "type": "bytes20"},
     {"name": "app-type",        "type": "string32"},
-    {"name": "initial-ticket",  "type": "u64"},
-    {"name": "ticket-count",    "type": "u64"},
+    {"name": "initial-ticket",  "type": "u64be"},
+    {"name": "ticket-count",    "type": "u64be"},
     {"name": "init-data",       "type": "hex"}
   ]
 }

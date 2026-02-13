@@ -135,7 +135,7 @@ fn args_route_through_parameterized_chain() {
         ]
     );
     let rc = args.iter().find(|a| a.name == "recipient-chain").unwrap();
-    assert_eq!(rc.field_type, "u16");
+    assert_eq!(rc.field_type, "u16be");
 }
 
 #[test]
@@ -1002,7 +1002,7 @@ fn builtin_with_overrides_adds_new_schema() {
     std::fs::create_dir_all(&org_dir).unwrap();
     std::fs::write(
         org_dir.join("my-payload.json"),
-        r#"[{"name": "tag", "const": "CAFE"}, {"name": "value", "type": "u32"}]"#,
+        r#"[{"name": "tag", "const": "CAFE"}, {"name": "value", "type": "u32be"}]"#,
     )
     .unwrap();
 
@@ -1037,7 +1037,7 @@ fn builtin_with_overrides_shadows_builtin() {
             "about": "Overridden onboard schema",
             "fields": [
                 {"name": "prefix", "const": "5852504C"},
-                {"name": "value",  "type": "u64"}
+                {"name": "value",  "type": "u64be"}
             ]
         }"#,
     )

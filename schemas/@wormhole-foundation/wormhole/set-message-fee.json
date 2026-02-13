@@ -3,7 +3,7 @@
   "fields": [
     {"name": "module",       "const": "00000000000000000000000000000000000000000000000000000000436f7265"},
     {"name": "action",       "const": "03"},
-    {"name": "chain-id",     "type": "u16"},
-    {"name": "message-fee",  "type": "u256", "help": "fee amount in native token smallest units"}
+    {"name": "chain-id",     "type": "u16be"},
+    {"name": "message-fee",  "type": "u256be", "help": "fee amount in native token smallest units"}
   ]
 }

@@ -3,8 +3,8 @@
   "fields": [
     {"name": "module",            "const": "000000000000000000000000000000000000000000546f6b656e427269646765"},
     {"name": "action",            "const": "01"},
-    {"name": "chain-id",          "type": "u16", "help": "target chain (0 = all chains)"},
-    {"name": "emitter-chain-id",  "type": "u16"},
+    {"name": "chain-id",          "type": "u16be", "help": "target chain (0 = all chains)"},
+    {"name": "emitter-chain-id",  "type": "u16be"},
     {"name": "emitter-address",   "type": "address"}
   ]
 }
