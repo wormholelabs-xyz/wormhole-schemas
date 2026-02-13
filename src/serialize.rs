@@ -8,6 +8,7 @@ pub struct ArgInfo {
     pub name: String,
     pub field_type: String,
     pub help: Option<String>,
+    pub enum_values: Option<Vec<String>>,
 }
 
 /// Serialize a single field value to bytes based on its type.

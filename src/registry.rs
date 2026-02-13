@@ -708,6 +708,22 @@ impl Registry {
                         name: name.clone(),
                         field_type: field_type.to_string(),
                         help: help.clone(),
+                        enum_values: None,
+                    });
+                }
+                Field::Enum {
+                    name,
+                    encoding,
+                    values,
+                    help,
+                } => {
+                    let variant_names: Vec<String> =
+                        values.iter().map(|(n, _)| n.clone()).collect();
+                    args.push(ArgInfo {
+                        name: name.clone(),
+                        field_type: format!("enum({})", encoding),
+                        help: help.clone(),
+                        enum_values: Some(variant_names),
                     });
                 }
                 Field::Ref { ref_, .. } => {
@@ -729,6 +745,7 @@ impl Registry {
                         name: name.clone(),
                         field_type: "hex".to_string(),
                         help: None,
+                        enum_values: None,
                     });
                 }
                 Field::Const { .. } | Field::Zeros(_) => {
@@ -765,7 +782,7 @@ impl Registry {
         let mut i = 0;
         while i < fields.len() {
             match &fields[i] {
-                Field::Named { name, .. } => {
+                Field::Named { name, .. } | Field::Enum { name, .. } => {
                     if values.get(name).and_then(|v| v.as_str()).is_none() {
                         missing.push(name.clone());
                     }
@@ -863,6 +880,33 @@ impl Registry {
                         .ok_or_else(|| anyhow::anyhow!("missing value for field '{}'", name))?;
                     serialize::serialize_field(field_type, val, output)
                         .with_context(|| format!("serializing field '{}'", name))?;
+                }
+                Field::Enum {
+                    name,
+                    encoding,
+                    values: variants,
+                    ..
+                } => {
+                    let variant_name =
+                        values.get(name).and_then(|v| v.as_str()).ok_or_else(|| {
+                            anyhow::anyhow!("missing value for enum field '{}'", name)
+                        })?;
+                    let disc = variants
+                        .iter()
+                        .find(|(n, _)| n == variant_name)
+                        .map(|(_, v)| *v)
+                        .ok_or_else(|| {
+                            let valid: Vec<&str> =
+                                variants.iter().map(|(n, _)| n.as_str()).collect();
+                            anyhow::anyhow!(
+                                "unknown variant '{}' for enum field '{}' (valid: {})",
+                                variant_name,
+                                name,
+                                valid.join(", ")
+                            )
+                        })?;
+                    serialize::serialize_field(encoding, &disc.to_string(), output)
+                        .with_context(|| format!("serializing enum field '{}'", name))?;
                 }
                 Field::LengthPrefix(size_type) => {
                     // Next field must be a ref; serialize it into a temp buffer to get the length
@@ -1043,6 +1087,38 @@ impl Registry {
                     let val = parse::parse_field(field_type, cursor)
                         .with_context(|| format!("parsing field '{}'", name))?;
                     map.insert(name.clone(), serde_json::Value::String(val));
+                }
+                Field::Enum {
+                    name,
+                    encoding,
+                    values: variants,
+                    ..
+                } => {
+                    let raw = parse::parse_field(encoding, cursor)
+                        .with_context(|| format!("parsing enum field '{}'", name))?;
+                    let disc: u64 = raw.parse().with_context(|| {
+                        format!("enum field '{}': invalid discriminant '{}'", name, raw)
+                    })?;
+                    let variant_name = variants
+                        .iter()
+                        .find(|(_, v)| *v == disc)
+                        .map(|(n, _)| n.as_str())
+                        .ok_or_else(|| {
+                            let valid: Vec<String> = variants
+                                .iter()
+                                .map(|(n, v)| format!("{}={}", n, v))
+                                .collect();
+                            anyhow::anyhow!(
+                                "unknown discriminant {} for enum field '{}' (valid: {})",
+                                disc,
+                                name,
+                                valid.join(", ")
+                            )
+                        })?;
+                    map.insert(
+                        name.clone(),
+                        serde_json::Value::String(variant_name.to_string()),
+                    );
                 }
                 Field::LengthPrefix(size_type) => {
                     // Read the length, create a sub-cursor, parse the next Ref within it

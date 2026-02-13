@@ -49,7 +49,7 @@ fn load_all_schemas() {
     // NTT transceiver
     assert!(names.contains(&format!("{NTT}/wormhole-transceiver-init").as_str()));
     assert!(names.contains(&format!("{NTT}/wormhole-peer-registration").as_str()));
-    assert_eq!(names.len(), 28);
+    assert_eq!(names.len(), 29);
 }
 
 #[test]
@@ -974,7 +974,7 @@ fn builtin_loads_all_schemas() {
     assert!(names.contains(&format!("{WH}/vaa").as_str()));
     assert!(names.contains(&format!("{TB}/transfer").as_str()));
     assert!(names.contains(&format!("{NTT}/native-token-transfer").as_str()));
-    assert_eq!(names.len(), 28);
+    assert_eq!(names.len(), 29);
 }
 
 #[test]
@@ -1014,7 +1014,7 @@ fn builtin_with_overrides_adds_new_schema() {
     assert!(names.contains(&format!("{WH}/vaa").as_str()));
     // Plus the new one
     assert!(names.contains(&"@custom/project/my-payload"));
-    assert_eq!(names.len(), 29);
+    assert_eq!(names.len(), 30);
 
     // The new schema works
     let values = serde_json::json!({"value": "42"});
@@ -1060,4 +1060,95 @@ fn builtin_with_overrides_shadows_builtin() {
     let names = reg.schemas();
     assert!(names.contains(&format!("{WH}/vaa").as_str()));
     assert!(names.contains(&format!("{TB}/transfer").as_str()));
+}
+
+// ---- Enum field tests ----
+
+#[test]
+fn enum_roundtrip() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("test.json"),
+        r#"[
+            {"name": "mode", "enum": {"type": "u8", "values": {"Fast": 0, "Slow": 1, "Turbo": 2}}},
+            {"name": "count", "type": "u8"}
+        ]"#,
+    )
+    .unwrap();
+    let reg = Registry::load(dir.path()).unwrap();
+
+    // Serialize with variant name
+    let values = serde_json::json!({"mode": "Turbo", "count": "5"});
+    let payload = reg.serialize("test", &values).unwrap();
+    assert_eq!(payload, vec![2, 5]); // Turbo=2, count=5
+
+    // Parse back — should get variant name, not number
+    let parsed = reg.parse("test", &payload).unwrap();
+    assert_eq!(parsed["mode"], "Turbo");
+    assert_eq!(parsed["count"], "5");
+}
+
+#[test]
+fn enum_unknown_variant_on_build() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("test.json"),
+        r#"[{"name": "x", "enum": {"type": "u8", "values": {"A": 0, "B": 1}}}]"#,
+    )
+    .unwrap();
+    let reg = Registry::load(dir.path()).unwrap();
+
+    let values = serde_json::json!({"x": "C"});
+    let err = reg.serialize("test", &values).unwrap_err().to_string();
+    assert!(err.contains("unknown variant"), "error was: {}", err);
+}
+
+#[test]
+fn enum_unknown_discriminant_on_parse() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("test.json"),
+        r#"[{"name": "x", "enum": {"type": "u8", "values": {"A": 0, "B": 1}}}]"#,
+    )
+    .unwrap();
+    let reg = Registry::load(dir.path()).unwrap();
+
+    let err = reg.parse("test", &[99]).unwrap_err().to_string();
+    assert!(err.contains("unknown discriminant"), "error was: {}", err);
+}
+
+#[test]
+fn enum_u16be_encoding() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("test.json"),
+        r#"[{"name": "chain", "enum": {"type": "u16be", "values": {"Solana": 1, "Ethereum": 2, "XRPL": 1000}}}]"#,
+    )
+    .unwrap();
+    let reg = Registry::load(dir.path()).unwrap();
+
+    let values = serde_json::json!({"chain": "XRPL"});
+    let payload = reg.serialize("test", &values).unwrap();
+    assert_eq!(payload, vec![0x03, 0xe8]); // 1000 in big-endian u16
+
+    let parsed = reg.parse("test", &payload).unwrap();
+    assert_eq!(parsed["chain"], "XRPL");
+}
+
+#[test]
+fn enum_args_shows_variants() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("test.json"),
+        r#"[{"name": "mode", "enum": {"type": "u8", "values": {"Fast": 0, "Slow": 1}}}]"#,
+    )
+    .unwrap();
+    let reg = Registry::load(dir.path()).unwrap();
+    let args = reg.args("test").unwrap();
+    assert_eq!(args.len(), 1);
+    assert_eq!(args[0].name, "mode");
+    assert!(args[0].field_type.contains("enum"));
+    let ev = args[0].enum_values.as_ref().unwrap();
+    assert!(ev.contains(&"Fast".to_string()));
+    assert!(ev.contains(&"Slow".to_string()));
 }

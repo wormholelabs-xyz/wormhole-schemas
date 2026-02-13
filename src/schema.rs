@@ -26,6 +26,22 @@ pub enum FieldType {
 }
 
 impl FieldType {
+    /// True for numeric types that can back an enum discriminant.
+    pub fn is_numeric(&self) -> bool {
+        matches!(
+            self,
+            FieldType::U8
+                | FieldType::U16Be
+                | FieldType::U16Le
+                | FieldType::U32Be
+                | FieldType::U32Le
+                | FieldType::U64Be
+                | FieldType::U64Le
+                | FieldType::U256Be
+                | FieldType::U256Le
+        )
+    }
+
     pub fn from_type_str(s: &str) -> Result<Self, String> {
         match s {
             "u8" => Ok(FieldType::U8),
@@ -91,6 +107,14 @@ pub enum Field {
         field_type: FieldType,
         help: Option<String>,
     },
+    /// An enum field: named variants mapped to numeric discriminant values.
+    /// JSON: `{"name": "app-type", "enum": {"type": "u8", "values": {"Core": 0, "Ntt": 2}}}`
+    Enum {
+        name: String,
+        encoding: FieldType,
+        values: Vec<(String, u64)>,
+        help: Option<String>,
+    },
     /// An array of schemas, repeated `count_field` times.
     /// JSON: `{"name": "sigs", "repeat": "sig-count", "ref": "@this/guardian-signature"}`
     Repeat {
@@ -123,6 +147,7 @@ impl<'de> Deserialize<'de> for Field {
                 let mut ref_val: Option<String> = None;
                 let mut length_prefix_val: Option<String> = None;
                 let mut repeat_val: Option<String> = None;
+                let mut enum_val: Option<serde_json::Value> = None;
                 let mut name_val: Option<String> = None;
                 let mut type_val: Option<String> = None;
                 let mut help_val: Option<String> = None;
@@ -134,6 +159,7 @@ impl<'de> Deserialize<'de> for Field {
                         "ref" => ref_val = Some(map.next_value()?),
                         "length_prefix" => length_prefix_val = Some(map.next_value()?),
                         "repeat" => repeat_val = Some(map.next_value()?),
+                        "enum" => enum_val = Some(map.next_value()?),
                         "name" => name_val = Some(map.next_value()?),
                         "type" => type_val = Some(map.next_value()?),
                         "help" => help_val = Some(map.next_value()?),
@@ -159,6 +185,10 @@ impl<'de> Deserialize<'de> for Field {
                         count_field: repeat,
                         ref_,
                     })
+                } else if let Some(enum_obj) = enum_val {
+                    let name = name_val
+                        .ok_or_else(|| de::Error::custom("enum field requires a 'name'"))?;
+                    parse_enum_field(name, enum_obj, help_val).map_err(de::Error::custom)
                 } else if let Some(r) = ref_val {
                     Ok(Field::Ref {
                         ref_: r,
@@ -261,12 +291,83 @@ impl<'de> Deserialize<'de> for Schema {
 /// Get the user-visible name of a field, if it has one.
 fn field_name(field: &Field) -> Option<&str> {
     match field {
-        Field::Named { name, .. } | Field::Const { name, .. } | Field::Repeat { name, .. } => {
-            Some(name.as_str())
-        }
+        Field::Named { name, .. }
+        | Field::Const { name, .. }
+        | Field::Enum { name, .. }
+        | Field::Repeat { name, .. } => Some(name.as_str()),
         Field::Ref {
             name: Some(name), ..
         } => Some(name.as_str()),
+        _ => None,
+    }
+}
+
+/// Parse the `"enum"` object from a field JSON into a `Field::Enum`.
+fn parse_enum_field(
+    name: String,
+    enum_obj: serde_json::Value,
+    help: Option<String>,
+) -> Result<Field, String> {
+    let obj = enum_obj.as_object().ok_or("enum must be an object")?;
+
+    let type_str = obj
+        .get("type")
+        .and_then(|v| v.as_str())
+        .ok_or("enum requires a 'type' string")?;
+    let encoding = FieldType::from_type_str(type_str)?;
+    if !encoding.is_numeric() {
+        return Err(format!(
+            "enum encoding must be a numeric type, got '{}'",
+            type_str
+        ));
+    }
+
+    let values_obj = obj
+        .get("values")
+        .and_then(|v| v.as_object())
+        .ok_or("enum requires a 'values' object")?;
+
+    if values_obj.is_empty() {
+        return Err("enum 'values' must not be empty".to_string());
+    }
+
+    let mut values = Vec::with_capacity(values_obj.len());
+    let mut seen_names = HashSet::new();
+    let mut seen_values = HashSet::new();
+
+    for (variant_name, disc_val) in values_obj {
+        if !seen_names.insert(variant_name.clone()) {
+            return Err(format!("duplicate enum variant name: '{}'", variant_name));
+        }
+        let disc = disc_val.as_u64().ok_or_else(|| {
+            format!(
+                "enum variant '{}' value must be a non-negative integer",
+                variant_name
+            )
+        })?;
+        if !seen_values.insert(disc) {
+            return Err(format!("duplicate enum discriminant value: {}", disc));
+        }
+        values.push((variant_name.clone(), disc));
+    }
+
+    Ok(Field::Enum {
+        name,
+        encoding,
+        values,
+        help,
+    })
+}
+
+/// Maximum value representable by an encoding type.
+fn encoding_max(encoding: &FieldType) -> Option<u64> {
+    match encoding {
+        FieldType::U8 => Some(u8::MAX as u64),
+        FieldType::U16Be | FieldType::U16Le => Some(u16::MAX as u64),
+        FieldType::U32Be | FieldType::U32Le => Some(u32::MAX as u64),
+        FieldType::U64Be | FieldType::U64Le => Some(u64::MAX),
+        // U256 always fits in u64 range since discriminants are u64
+        FieldType::U256Be | FieldType::U256Le => Some(u64::MAX),
         _ => None,
     }
 }
@@ -290,6 +391,32 @@ fn validate_schema(schema: &Schema) -> Result<()> {
                 match fields.get(i + 1) {
                     Some(Field::Ref { .. }) => {} // OK
                     _ => bail!("length_prefix must be followed by a ref field"),
+                }
+            }
+        }
+
+        // Check enum discriminant values fit in their encoding type
+        for field in fields {
+            if let Field::Enum {
+                name,
+                encoding,
+                values,
+                ..
+            } = field
+            {
+                if let Some(max) = encoding_max(encoding) {
+                    for (variant, disc) in values {
+                        if *disc > max {
+                            bail!(
+                                "enum field '{}': variant '{}' value {} exceeds {} max ({})",
+                                name,
+                                variant,
+                                disc,
+                                encoding,
+                                max
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -402,5 +529,88 @@ mod tests {
             {"name": "x", "type": "float64"}
         ]);
         assert!(parse_schema(json).is_err());
+    }
+
+    #[test]
+    fn parse_enum_field_valid() {
+        let json = serde_json::json!([
+            {"name": "app-type", "enum": {"type": "u8", "values": {"Core": 0, "Wtt": 1, "Ntt": 2}}}
+        ]);
+        let schema = parse_schema(json).unwrap();
+        let fields = schema.fields.unwrap();
+        assert_eq!(fields.len(), 1);
+        match &fields[0] {
+            Field::Enum {
+                name,
+                encoding,
+                values,
+                help,
+            } => {
+                assert_eq!(name, "app-type");
+                assert_eq!(*encoding, FieldType::U8);
+                assert_eq!(values.len(), 3);
+                assert!(help.is_none());
+            }
+            other => panic!("expected Enum, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_enum_with_help() {
+        let json = serde_json::json!([
+            {"name": "mode", "enum": {"type": "u16be", "values": {"Fast": 0, "Slow": 1}}, "help": "transfer mode"}
+        ]);
+        let schema = parse_schema(json).unwrap();
+        let fields = schema.fields.unwrap();
+        match &fields[0] {
+            Field::Enum { help, .. } => {
+                assert_eq!(help.as_deref(), Some("transfer mode"));
+            }
+            other => panic!("expected Enum, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn enum_requires_name() {
+        let json = serde_json::json!([
+            {"enum": {"type": "u8", "values": {"A": 0}}}
+        ]);
+        assert!(parse_schema(json).is_err());
+    }
+
+    #[test]
+    fn enum_rejects_non_numeric_encoding() {
+        let json = serde_json::json!([
+            {"name": "x", "enum": {"type": "address", "values": {"A": 0}}}
+        ]);
+        let err = parse_schema(json).unwrap_err().to_string();
+        assert!(err.contains("numeric"), "error was: {}", err);
+    }
+
+    #[test]
+    fn enum_rejects_empty_values() {
+        let json = serde_json::json!([
+            {"name": "x", "enum": {"type": "u8", "values": {}}}
+        ]);
+        let err = parse_schema(json).unwrap_err().to_string();
+        assert!(err.contains("empty"), "error was: {}", err);
+    }
+
+    #[test]
+    fn enum_rejects_duplicate_discriminant() {
+        let json = serde_json::json!([
+            {"name": "x", "enum": {"type": "u8", "values": {"A": 0, "B": 0}}}
+        ]);
+        let err = parse_schema(json).unwrap_err().to_string();
+        assert!(err.contains("duplicate"), "error was: {}", err);
+    }
+
+    #[test]
+    fn enum_rejects_overflow() {
+        let json = serde_json::json!([
+            {"name": "x", "enum": {"type": "u8", "values": {"A": 256}}}
+        ]);
+        let err = parse_schema(json).unwrap_err().to_string();
+        assert!(err.contains("exceeds"), "error was: {}", err);
     }
 }

@@ -3,7 +3,7 @@
   "fields": [
     {"name": "prefix",               "const": "9c23bd3b"},
     {"name": "ntt-manager-address",  "type": "address"},
-    {"name": "ntt-manager-mode",     "type": "u8", "help": "0 = Locking, 1 = Burning"},
+    {"name": "ntt-manager-mode",     "enum": {"type": "u8", "values": {"Locking": 0, "Burning": 1}}},
     {"name": "token-address",        "type": "address"},
     {"name": "token-decimals",       "type": "u8"}
   ]
