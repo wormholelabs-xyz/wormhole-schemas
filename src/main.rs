@@ -249,9 +249,13 @@ fn read_payload(arg: Option<String>) -> Result<Vec<u8>> {
             let text = String::from_utf8_lossy(&buf);
             let trimmed = text.trim();
             if !trimmed.is_empty()
-                && trimmed
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=' || b.is_ascii_whitespace())
+                && trimmed.bytes().all(|b| {
+                    b.is_ascii_alphanumeric()
+                        || b == b'+'
+                        || b == b'/'
+                        || b == b'='
+                        || b.is_ascii_whitespace()
+                })
             {
                 decode_text_payload(trimmed)
             } else {
