@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 default = ["sign"]
-sign = ["dep:libsecp256k1", "dep:sha3", "dep:base64"]
+sign = ["dep:libsecp256k1", "dep:sha3"]
 fetch = ["ureq"]
 
 [[bin]]
@@ -23,7 +23,7 @@ anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }
 libsecp256k1 = { version = "0.7", optional = true }
 sha3 = { version = "0.10", optional = true }
-base64 = { version = "0.22", optional = true }
+base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"

@@ -372,6 +372,60 @@ fn parse_hex_from_stdin() {
 }
 
 // ---------------------------------------------------------------------------
+// Base64 input
+// ---------------------------------------------------------------------------
+
+#[test]
+fn parse_base64_arg() {
+    // Build an onboard payload as hex, convert to base64, and parse it
+    let hex = run(
+        &[
+            "build",
+            "--schema",
+            "onboard",
+            "admin=0000000000000000000000000000000000000001",
+            "app-type=NTT",
+            "initial-ticket=1",
+            "ticket-count=10",
+            "init-data=",
+        ],
+        None,
+    );
+    let bytes = hex::decode(hex.trim()).unwrap();
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+
+    let json = run(&["parse", "--schema", "onboard", &b64], None);
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(v["app-type"], "NTT");
+    assert_eq!(v["initial-ticket"], "1");
+}
+
+#[test]
+fn parse_base64_stdin() {
+    let hex = run(
+        &[
+            "build",
+            "--schema",
+            "onboard",
+            "admin=0000000000000000000000000000000000000001",
+            "app-type=NTT",
+            "initial-ticket=1",
+            "ticket-count=10",
+            "init-data=",
+        ],
+        None,
+    );
+    let bytes = hex::decode(hex.trim()).unwrap();
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+
+    let json = run(&["parse", "--schema", "onboard"], Some(&b64));
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(v["app-type"], "NTT");
+}
+
+// ---------------------------------------------------------------------------
 // Error cases
 // ---------------------------------------------------------------------------
 

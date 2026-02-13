@@ -198,6 +198,39 @@ fn cmd_build(
     Ok(())
 }
 
+/// Decode a text payload as hex or base64.
+///
+/// Tries hex first (if all chars are hex digits), then base64.
+fn decode_text_payload(text: &str) -> Result<Vec<u8>> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        bail!("empty payload");
+    }
+
+    // Strip whitespace for both decoders
+    let clean: String = trimmed
+        .chars()
+        .filter(|c| !c.is_ascii_whitespace())
+        .collect();
+
+    // Pure hex chars → hex
+    if clean.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return hex::decode(&clean).context("decoding hex payload");
+    }
+
+    // Try base64 (standard or URL-safe, with or without padding)
+    use base64::Engine;
+    if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(&clean) {
+        return Ok(bytes);
+    }
+    if let Ok(bytes) = base64::engine::general_purpose::URL_SAFE.decode(&clean) {
+        return Ok(bytes);
+    }
+
+    // Fall back to hex decode for the error message
+    hex::decode(&clean).context("payload is not valid hex or base64")
+}
+
 /// Read payload data from argument, @file reference, or stdin.
 fn read_payload(arg: Option<String>) -> Result<Vec<u8>> {
     match arg {
@@ -206,28 +239,21 @@ fn read_payload(arg: Option<String>) -> Result<Vec<u8>> {
             let path = &s[1..];
             std::fs::read(path).with_context(|| format!("reading file: {}", path))
         }
-        Some(s) => {
-            // Treat as hex string
-            hex::decode(s.trim()).context("decoding hex payload")
-        }
+        Some(s) => decode_text_payload(&s),
         None => {
             // Read from stdin
             let mut buf = Vec::new();
             io::stdin().read_to_end(&mut buf)?;
 
-            // If it looks like hex (all ASCII hex chars, possibly with whitespace), decode it
+            // If it looks like text, try hex/base64 decoding
             let text = String::from_utf8_lossy(&buf);
             let trimmed = text.trim();
             if !trimmed.is_empty()
                 && trimmed
                     .bytes()
-                    .all(|b| b.is_ascii_hexdigit() || b.is_ascii_whitespace())
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=' || b.is_ascii_whitespace())
             {
-                let clean: String = trimmed
-                    .chars()
-                    .filter(|c| !c.is_ascii_whitespace())
-                    .collect();
-                hex::decode(&clean).context("decoding hex from stdin")
+                decode_text_payload(trimmed)
             } else {
                 // Treat as raw bytes
                 Ok(buf)
