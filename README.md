@@ -197,7 +197,7 @@ Schemas can accept type parameters for composition:
 ```rust
 use wormhole_schemas::Registry;
 
-let reg = Registry::builtin()?;
+let reg = Registry::new()?;
 
 // Parse binary to JSON
 let (schema, json) = reg.infer(&bytes)?;

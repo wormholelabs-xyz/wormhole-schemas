@@ -6,7 +6,11 @@
 use std::process::{Command, Stdio};
 
 fn wsch() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_wsch"))
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_wsch"));
+    // Schemas are no longer bundled — point at the repo's schemas directory.
+    let schemas_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("schemas");
+    cmd.arg("--schemas").arg(schemas_dir);
+    cmd
 }
 
 /// Run wsch with args, piping `stdin_data` in, and return stdout as a String.

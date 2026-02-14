@@ -966,10 +966,11 @@ fn infer_vaa_onboard() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn builtin_loads_all_schemas() {
-    let reg = Registry::builtin().unwrap();
+fn new_loads_from_disk_cache() {
+    // Registry::new() loads from disk cache; with no cache dir, it's empty
+    // We test via load() which is the same path used by all other tests
+    let reg = Registry::load(&schema_dir()).unwrap();
     let names = reg.schemas();
-    // Should contain the same schemas as load()
     assert!(names.contains(&format!("{XRPL}/onboard").as_str()));
     assert!(names.contains(&format!("{WH}/vaa").as_str()));
     assert!(names.contains(&format!("{TB}/transfer").as_str()));
@@ -978,9 +979,8 @@ fn builtin_loads_all_schemas() {
 }
 
 #[test]
-fn builtin_serialize_roundtrip() {
-    // Verify builtin schemas actually work for serialize+parse, not just load
-    let reg = Registry::builtin().unwrap();
+fn load_serialize_roundtrip() {
+    let reg = Registry::load(&schema_dir()).unwrap();
     let values = serde_json::json!({
         "admin": "0000000000000000000000000000000000000001",
         "app-type": "NTT",
@@ -995,9 +995,12 @@ fn builtin_serialize_roundtrip() {
 }
 
 #[test]
-fn builtin_with_overrides_adds_new_schema() {
+fn with_overrides_adds_new_schema() {
     let tmp = TempDir::new().unwrap();
-    // Add a custom schema in @custom/project/my-payload.json
+
+    // Copy real schemas as the base, then add a custom overlay
+    copy_dir_recursive(&schema_dir(), tmp.path());
+
     let org_dir = tmp.path().join("@custom").join("project");
     std::fs::create_dir_all(&org_dir).unwrap();
     std::fs::write(
@@ -1006,10 +1009,10 @@ fn builtin_with_overrides_adds_new_schema() {
     )
     .unwrap();
 
-    let reg = Registry::builtin_with_overrides(tmp.path()).unwrap();
+    let reg = Registry::load(tmp.path()).unwrap();
     let names = reg.schemas();
 
-    // All builtins still present
+    // All originals still present
     assert!(names.contains(&format!("{XRPL}/onboard").as_str()));
     assert!(names.contains(&format!("{WH}/vaa").as_str()));
     // Plus the new one
@@ -1026,7 +1029,7 @@ fn builtin_with_overrides_adds_new_schema() {
 }
 
 #[test]
-fn builtin_with_overrides_shadows_builtin() {
+fn with_overrides_shadows_base_schema() {
     let tmp = TempDir::new().unwrap();
     // Override the onboard schema with a different "about" and simpler fields
     let org_dir = tmp.path().join("@wormholelabs-xyz").join("ripple");
@@ -1043,9 +1046,28 @@ fn builtin_with_overrides_shadows_builtin() {
     )
     .unwrap();
 
-    let reg = Registry::builtin_with_overrides(tmp.path()).unwrap();
+    // Copy real schemas into the same temp dir so we can load them together
+    copy_dir_recursive(&schema_dir(), tmp.path());
 
-    // The override should replace the builtin
+    // Now write the override on top (overwriting the copied original)
+    std::fs::write(
+        tmp.path()
+            .join("@wormholelabs-xyz")
+            .join("ripple")
+            .join("onboard.json"),
+        r#"{
+            "about": "Overridden onboard schema",
+            "fields": [
+                {"name": "prefix", "const": "5852504C"},
+                {"name": "value",  "type": "u64be"}
+            ]
+        }"#,
+    )
+    .unwrap();
+
+    let reg = Registry::load(tmp.path()).unwrap();
+
+    // The override should replace the original
     let schema = reg.get(&format!("{XRPL}/onboard")).unwrap();
     assert_eq!(schema.about.as_deref(), Some("Overridden onboard schema"));
 
@@ -1056,10 +1078,26 @@ fn builtin_with_overrides_shadows_builtin() {
     assert_eq!(&payload[0..4], &hex::decode("5852504C").unwrap());
     assert_eq!(&payload[4..12], &99u64.to_be_bytes());
 
-    // Other builtins still work
+    // Other schemas still work
     let names = reg.schemas();
     assert!(names.contains(&format!("{WH}/vaa").as_str()));
     assert!(names.contains(&format!("{TB}/transfer").as_str()));
+}
+
+/// Helper: recursively copy a directory tree.
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) {
+    std::fs::create_dir_all(dst).unwrap();
+    for entry in std::fs::read_dir(src).unwrap() {
+        let entry = entry.unwrap();
+        let ty = entry.file_type().unwrap();
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if ty.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path);
+        } else {
+            std::fs::copy(&src_path, &dst_path).unwrap();
+        }
+    }
 }
 
 // ---- Enum field tests ----
