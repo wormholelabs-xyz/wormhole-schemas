@@ -116,6 +116,7 @@ $ wsch parse <new-hex>
 | `wsch parse [payload]` | Decode binary to JSON. Schema auto-detected or via `-s`. Reads hex arg, `@file`, or stdin. |
 | `wsch build -s <schema> [overrides...]` | Encode JSON to binary. Values from `--json`, stdin, or `key=value` args. Dot notation for nesting. |
 | `wsch schemas` | List all loaded schemas. |
+| `wsch sync` | Download all remote schemas to the local disk cache for offline use. `-v` for verbose output. |
 | `wsch sign [vaa]` | Sign a VAA with `--guardian-key` (or `GUARDIAN_KEY` env). `--format base64` for base64 output. Additive: preserves existing signatures. |
 
 ## Schema references
@@ -197,7 +198,7 @@ Schemas can accept type parameters for composition:
 ```rust
 use wormhole_schemas::Registry;
 
-let reg = Registry::builtin()?;
+let reg = Registry::new()?;
 
 // Parse binary to JSON
 let (schema, json) = reg.infer(&bytes)?;
@@ -220,7 +221,28 @@ let bytes = reg.serialize("transfer", &json_value)?;
 
 With `--features fetch`, schemas that aren't bundled locally are fetched from GitHub on demand. Resolution order:
 
-1. The source repo: `github.com/{org}/{repo}/main/schemas/{name}.json`
-2. The central registry: `github.com/wormholelabs-xyz/wormhole-schemas/main/schemas/@{org}/{repo}/{name}.json`
+1. User overrides (`--schemas ./dir`)
+2. Persistent disk cache (`~/.wormhole-schemas/`)
+3. The source repo: `github.com/{org}/{repo}/main/schemas/{name}.json`
+4. The central registry: `github.com/wormholelabs-xyz/wormhole-schemas/main/schemas/@{org}/{repo}/{name}.json`
 
-Fetched schemas are cached in memory for the duration of the command.
+Fetched schemas are written to the disk cache so subsequent invocations don't need network access.
+
+The cache location can be overridden with `$WORMHOLE_SCHEMAS_CACHE`.
+
+### Syncing schemas
+
+`wsch sync` bulk-downloads all schemas from the central registry into the local cache for fully offline operation:
+
+```
+$ wsch sync
+  + @wormhole-foundation/token-bridge/transfer
+  + @wormhole-foundation/token-bridge/transfer-with-payload
+  + @wormhole-foundation/wormhole/vaa
+  ...
+synced 14 schemas
+
+$ wsch sync -v    # verbose: shows unchanged schemas too
+```
+
+The sync also refreshes any previously cached schemas that were fetched on-demand from source repos outside the central registry.

@@ -9,7 +9,7 @@ use wormhole_schemas::Registry;
 #[derive(Parser)]
 #[command(name = "wsch")]
 struct Cli {
-    /// Path to additional schemas directory (layered on top of built-in schemas)
+    /// Path to additional schemas directory (layered on top of cached schemas)
     #[arg(long)]
     schemas: Option<PathBuf>,
 
@@ -44,6 +44,14 @@ enum Command {
     /// List all available schemas.
     Schemas,
 
+    /// Download all schemas from the central registry to the local cache.
+    #[cfg(feature = "fetch")]
+    Sync {
+        /// Show each schema as it is downloaded.
+        #[arg(long, short)]
+        verbose: bool,
+    },
+
     /// Sign an unsigned VAA with a guardian key.
     #[cfg(feature = "sign")]
     Sign {
@@ -73,10 +81,17 @@ fn main() {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
+
+    // Handle sync before building registry (it doesn't need one)
+    #[cfg(feature = "fetch")]
+    if let Command::Sync { verbose } = &cli.command {
+        return cmd_sync(*verbose);
+    }
+
     let reg = match &cli.schemas {
-        Some(dir) => Registry::builtin_with_overrides(dir)
+        Some(dir) => Registry::with_overrides(dir)
             .with_context(|| format!("loading schemas from {}", dir.display()))?,
-        None => Registry::builtin().context("loading built-in schemas")?,
+        None => Registry::new().context("loading schemas")?,
     };
 
     match cli.command {
@@ -87,6 +102,8 @@ fn run() -> Result<()> {
             overrides,
         } => cmd_build(&reg, schema.as_deref(), json, &overrides),
         Command::Schemas => cmd_schemas(&reg),
+        #[cfg(feature = "fetch")]
+        Command::Sync { .. } => unreachable!(),
         #[cfg(feature = "sign")]
         Command::Sign {
             guardian_key,
@@ -95,6 +112,14 @@ fn run() -> Result<()> {
             vaa,
         } => cmd_sign(&guardian_key, guardian_index, &format, vaa),
     }
+}
+
+#[cfg(feature = "fetch")]
+fn cmd_sync(verbose: bool) -> Result<()> {
+    eprintln!("syncing schemas from central registry...");
+    let count = wormhole_schemas::sync::sync(verbose)?;
+    eprintln!("synced {} schemas", count);
+    Ok(())
 }
 
 fn cmd_schemas(reg: &Registry) -> Result<()> {
