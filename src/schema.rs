@@ -148,6 +148,7 @@ impl<'de> Deserialize<'de> for Field {
                 let mut length_prefix_val: Option<String> = None;
                 let mut repeat_val: Option<String> = None;
                 let mut enum_val: Option<serde_json::Value> = None;
+                let mut anchor_val: Option<String> = None;
                 let mut name_val: Option<String> = None;
                 let mut type_val: Option<String> = None;
                 let mut help_val: Option<String> = None;
@@ -160,6 +161,7 @@ impl<'de> Deserialize<'de> for Field {
                         "length_prefix" => length_prefix_val = Some(map.next_value()?),
                         "repeat" => repeat_val = Some(map.next_value()?),
                         "enum" => enum_val = Some(map.next_value()?),
+                        "anchor" => anchor_val = Some(map.next_value()?),
                         "name" => name_val = Some(map.next_value()?),
                         "type" => type_val = Some(map.next_value()?),
                         "help" => help_val = Some(map.next_value()?),
@@ -169,7 +171,14 @@ impl<'de> Deserialize<'de> for Field {
                     }
                 }
 
-                if let Some(c) = const_val {
+                if let Some(anchor) = anchor_val {
+                    let name = name_val
+                        .ok_or_else(|| de::Error::custom("anchor field requires a 'name'"))?;
+                    Ok(Field::Const {
+                        name,
+                        value: anchor_discriminator(&anchor),
+                    })
+                } else if let Some(c) = const_val {
                     let name = name_val
                         .ok_or_else(|| de::Error::custom("const field requires a 'name'"))?;
                     Ok(Field::Const { name, value: c })
@@ -300,6 +309,15 @@ fn field_name(field: &Field) -> Option<&str> {
         } => Some(name.as_str()),
         _ => None,
     }
+}
+
+/// Compute an Anchor discriminator: `sha256(input)[..8]` as hex.
+///
+/// The input is the full discriminator string, e.g. `"account:XrplAccount"`.
+fn anchor_discriminator(input: &str) -> String {
+    use sha2::Digest;
+    let hash = sha2::Sha256::digest(input.as_bytes());
+    hex::encode(&hash[..8])
 }
 
 /// Parse the `"enum"` object from a field JSON into a `Field::Enum`.
@@ -527,6 +545,31 @@ mod tests {
     fn reject_unknown_field_type() {
         let json = serde_json::json!([
             {"name": "x", "type": "float64"}
+        ]);
+        assert!(parse_schema(json).is_err());
+    }
+
+    #[test]
+    fn anchor_produces_const() {
+        let json = serde_json::json!([
+            {"name": "disc", "anchor": "account:XrplAccount"}
+        ]);
+        let schema = parse_schema(json).unwrap();
+        let fields = schema.fields.unwrap();
+        assert_eq!(fields.len(), 1);
+        match &fields[0] {
+            Field::Const { name, value } => {
+                assert_eq!(name, "disc");
+                assert_eq!(value, "1432f4993cef2ea8");
+            }
+            other => panic!("expected Const, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn anchor_requires_name() {
+        let json = serde_json::json!([
+            {"anchor": "account:Foo"}
         ]);
         assert!(parse_schema(json).is_err());
     }

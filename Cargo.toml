@@ -19,6 +19,7 @@ ureq = { version = "2", features = ["json"], optional = true }
 bs58 = "0.5"
 hex = "0.4"
 ethnum = "1"
+sha2 = "0.10"
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }
 libsecp256k1 = { version = "0.7", optional = true }
