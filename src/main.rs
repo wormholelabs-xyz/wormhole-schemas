@@ -117,8 +117,16 @@ fn run() -> Result<()> {
 #[cfg(feature = "fetch")]
 fn cmd_sync(verbose: bool) -> Result<()> {
     eprintln!("syncing schemas from central registry...");
-    let count = wormhole_schemas::sync::sync(verbose)?;
+    let (count, invalid) = wormhole_schemas::sync::sync(verbose)?;
     eprintln!("synced {} schemas", count);
+    if !invalid.is_empty() {
+        eprintln!();
+        eprintln!("{} invalid schema(s):", invalid.len());
+        for (key, err) in &invalid {
+            eprintln!("  {}: {}", key, err);
+        }
+        std::process::exit(1);
+    }
     Ok(())
 }
 

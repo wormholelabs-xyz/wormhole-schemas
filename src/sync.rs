@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use crate::fetch::{
     cache_dir, fetch_json, read_cached, write_cached, BRANCHES, REGISTRY_ORG, REGISTRY_REPO,
 };
+use crate::schema;
 
 /// Sync all schemas to the local disk cache.
 ///
@@ -14,8 +15,8 @@ use crate::fetch::{
 ///    (i.e. previously fetched on-demand from a source repo) and refreshes
 ///    them from `raw.githubusercontent.com/{org}/{repo}/`.
 ///
-/// Returns the total number of schemas synced.
-pub fn sync(verbose: bool) -> Result<usize> {
+/// Returns `(synced_count, invalid_schemas)` where each invalid entry is `(key, error)`.
+pub fn sync(verbose: bool) -> Result<(usize, Vec<(String, String)>)> {
     let dir = cache_dir().ok_or_else(|| {
         anyhow::anyhow!("cannot determine cache directory: set $WORMHOLE_SCHEMAS_CACHE or $HOME")
     })?;
@@ -23,6 +24,7 @@ pub fn sync(verbose: bool) -> Result<usize> {
     let cache = Some(dir.clone());
     let mut synced: HashSet<String> = HashSet::new();
     let mut count = 0;
+    let mut invalid: Vec<(String, String)> = Vec::new();
     // Estimate total from existing cache size (will be adjusted when we know better)
     let cached_entries = scan_cache(&dir);
     let mut progress = Progress::new(cached_entries.len());
@@ -65,6 +67,9 @@ pub fn sync(verbose: bool) -> Result<usize> {
             match fetch_json(&url) {
                 Ok(value) => {
                     let status = write_and_diff(&cache, org, repo, name, &value);
+                    if let Err(e) = schema::parse_schema(value) {
+                        invalid.push((key.clone(), format!("{:#}", e)));
+                    }
                     synced.insert(key.clone());
                     count += 1;
                     progress.advance();
@@ -119,6 +124,9 @@ pub fn sync(verbose: bool) -> Result<usize> {
             );
             if let Ok(value) = fetch_json(&url) {
                 let status = write_and_diff(&cache, org, repo, name, &value);
+                if let Err(e) = schema::parse_schema(value) {
+                    invalid.push((key.clone(), format!("{:#}", e)));
+                }
                 count += 1;
                 ok = true;
                 progress.advance();
@@ -144,7 +152,7 @@ pub fn sync(verbose: bool) -> Result<usize> {
 
     progress.finish();
     write_sync_metadata(&cache, count);
-    Ok(count)
+    Ok((count, invalid))
 }
 
 // ---------------------------------------------------------------------------
