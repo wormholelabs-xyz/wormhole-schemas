@@ -42,6 +42,21 @@ impl FieldType {
         )
     }
 
+    /// Returns the fixed byte size of this type, or None for variable-size types (Hex).
+    pub fn fixed_size(&self) -> Option<usize> {
+        match self {
+            FieldType::U8 => Some(1),
+            FieldType::U16Be | FieldType::U16Le => Some(2),
+            FieldType::U32Be | FieldType::U32Le => Some(4),
+            FieldType::U64Be | FieldType::U64Le => Some(8),
+            FieldType::U256Be | FieldType::U256Le => Some(32),
+            FieldType::Address => Some(32),
+            FieldType::String32 => Some(32),
+            FieldType::Hex => None,
+            FieldType::Bytes(n) => Some(*n),
+        }
+    }
+
     pub fn from_type_str(s: &str) -> Result<Self, String> {
         match s {
             "u8" => Ok(FieldType::U8),
@@ -87,6 +102,13 @@ impl fmt::Display for FieldType {
     }
 }
 
+/// The inner content of an Option field: either a single typed value or inline fields.
+#[derive(Debug, Clone)]
+pub enum OptionInner {
+    Type(FieldType),
+    Fields(Vec<Field>),
+}
+
 /// A single field in a schema.
 #[derive(Debug, Clone)]
 pub enum Field {
@@ -122,6 +144,18 @@ pub enum Field {
         count_field: String,
         ref_: String,
     },
+    /// An optional value with a tag byte prefix.
+    /// JSON: `{"name": "val", "option": {"type": "u64le"}}` or
+    ///       `{"name": "val", "option": {"fields": [...]}}`
+    ///
+    /// Fixed mode (default): None = 0x00 + zero-padding to inner size. Some = 0x01 + inner.
+    /// Compact mode: None = 0x00 (1 byte). Some = 0x01 + inner.
+    Option {
+        name: String,
+        inner: OptionInner,
+        compact: bool,
+        help: Option<String>,
+    },
 }
 
 impl<'de> Deserialize<'de> for Field {
@@ -148,6 +182,7 @@ impl<'de> Deserialize<'de> for Field {
                 let mut length_prefix_val: Option<String> = None;
                 let mut repeat_val: Option<String> = None;
                 let mut enum_val: Option<serde_json::Value> = None;
+                let mut option_val: Option<serde_json::Value> = None;
                 let mut anchor_val: Option<String> = None;
                 let mut name_val: Option<String> = None;
                 let mut type_val: Option<String> = None;
@@ -161,6 +196,7 @@ impl<'de> Deserialize<'de> for Field {
                         "length_prefix" => length_prefix_val = Some(map.next_value()?),
                         "repeat" => repeat_val = Some(map.next_value()?),
                         "enum" => enum_val = Some(map.next_value()?),
+                        "option" => option_val = Some(map.next_value()?),
                         "anchor" => anchor_val = Some(map.next_value()?),
                         "name" => name_val = Some(map.next_value()?),
                         "type" => type_val = Some(map.next_value()?),
@@ -198,6 +234,10 @@ impl<'de> Deserialize<'de> for Field {
                     let name = name_val
                         .ok_or_else(|| de::Error::custom("enum field requires a 'name'"))?;
                     parse_enum_field(name, enum_obj, help_val).map_err(de::Error::custom)
+                } else if let Some(option_obj) = option_val {
+                    let name = name_val
+                        .ok_or_else(|| de::Error::custom("option field requires a 'name'"))?;
+                    parse_option_field(name, option_obj, help_val).map_err(de::Error::custom)
                 } else if let Some(r) = ref_val {
                     Ok(Field::Ref {
                         ref_: r,
@@ -303,7 +343,8 @@ fn field_name(field: &Field) -> Option<&str> {
         Field::Named { name, .. }
         | Field::Const { name, .. }
         | Field::Enum { name, .. }
-        | Field::Repeat { name, .. } => Some(name.as_str()),
+        | Field::Repeat { name, .. }
+        | Field::Option { name, .. } => Some(name.as_str()),
         Field::Ref {
             name: Some(name), ..
         } => Some(name.as_str()),
@@ -318,6 +359,89 @@ fn anchor_discriminator(input: &str) -> String {
     use sha2::Digest;
     let hash = sha2::Sha256::digest(input.as_bytes());
     hex::encode(&hash[..8])
+}
+
+/// Compute the fixed byte size of an option's inner content.
+/// Returns None if the size is variable (contains Hex, compact options, refs, etc.).
+pub fn option_inner_size(inner: &OptionInner) -> Option<usize> {
+    match inner {
+        OptionInner::Type(ft) => ft.fixed_size(),
+        OptionInner::Fields(fields) => fields_fixed_size(fields),
+    }
+}
+
+/// Compute the total fixed byte size of a field list.
+/// Returns None if any field has variable size.
+pub fn fields_fixed_size(fields: &[Field]) -> Option<usize> {
+    let mut total: usize = 0;
+    for field in fields {
+        let size = match field {
+            Field::Named { field_type, .. } => field_type.fixed_size()?,
+            Field::Enum { encoding, .. } => encoding.fixed_size()?,
+            Field::Const { value, .. } => value.len() / 2, // hex string → byte count
+            Field::Zeros(n) => *n,
+            Field::Option { inner, compact, .. } => {
+                if *compact {
+                    return None; // compact options are variable-size
+                }
+                1 + option_inner_size(inner)? // tag + inner
+            }
+            // Ref, Repeat, LengthPrefix, Hex are variable-size
+            Field::Ref { .. } | Field::Repeat { .. } | Field::LengthPrefix(_) => return None,
+        };
+        total += size;
+    }
+    Some(total)
+}
+
+/// Parse the `"option"` object from a field JSON into a `Field::Option`.
+fn parse_option_field(
+    name: String,
+    option_obj: serde_json::Value,
+    help: Option<String>,
+) -> Result<Field, String> {
+    let obj = option_obj.as_object().ok_or("option must be an object")?;
+
+    let compact = obj
+        .get("compact")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let has_type = obj.contains_key("type");
+    let has_fields = obj.contains_key("fields");
+
+    if has_type && has_fields {
+        return Err("option cannot have both 'type' and 'fields'".to_string());
+    }
+
+    let inner = if let Some(type_val) = obj.get("type").and_then(|v| v.as_str()) {
+        let ft = FieldType::from_type_str(type_val)?;
+        OptionInner::Type(ft)
+    } else if let Some(fields_val) = obj.get("fields") {
+        let fields: Vec<Field> = serde_json::from_value(fields_val.clone())
+            .map_err(|e| format!("invalid option fields: {}", e))?;
+        if fields.is_empty() {
+            return Err("option 'fields' must not be empty".to_string());
+        }
+        OptionInner::Fields(fields)
+    } else {
+        return Err("option requires either 'type' or 'fields'".to_string());
+    };
+
+    // Non-compact options must have computable fixed size
+    if !compact && option_inner_size(&inner).is_none() {
+        return Err(
+            "non-compact option inner must have fixed size (cannot contain hex, refs, etc.)"
+                .to_string(),
+        );
+    }
+
+    Ok(Field::Option {
+        name,
+        inner,
+        compact,
+        help,
+    })
 }
 
 /// Parse the `"enum"` object from a field JSON into a `Field::Enum`.
@@ -655,5 +779,182 @@ mod tests {
         ]);
         let err = parse_schema(json).unwrap_err().to_string();
         assert!(err.contains("exceeds"), "error was: {}", err);
+    }
+
+    // ---- Option field tests ----
+
+    #[test]
+    fn parse_option_single_type() {
+        let json = serde_json::json!([
+            {"name": "val", "option": {"type": "u64le"}}
+        ]);
+        let schema = parse_schema(json).unwrap();
+        let fields = schema.fields.unwrap();
+        assert_eq!(fields.len(), 1);
+        match &fields[0] {
+            Field::Option {
+                name,
+                inner,
+                compact,
+                help,
+            } => {
+                assert_eq!(name, "val");
+                assert!(!compact);
+                assert!(help.is_none());
+                assert!(matches!(inner, OptionInner::Type(FieldType::U64Le)));
+            }
+            other => panic!("expected Option, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_option_with_fields() {
+        let json = serde_json::json!([
+            {"name": "range", "option": {"fields": [
+                {"name": "start", "type": "u64le"},
+                {"name": "end", "type": "u64le"}
+            ]}}
+        ]);
+        let schema = parse_schema(json).unwrap();
+        let fields = schema.fields.unwrap();
+        assert_eq!(fields.len(), 1);
+        match &fields[0] {
+            Field::Option {
+                name,
+                inner,
+                compact,
+                ..
+            } => {
+                assert_eq!(name, "range");
+                assert!(!compact);
+                match inner {
+                    OptionInner::Fields(f) => assert_eq!(f.len(), 2),
+                    _ => panic!("expected Fields"),
+                }
+            }
+            other => panic!("expected Option, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_option_compact() {
+        let json = serde_json::json!([
+            {"name": "val", "option": {"type": "u64be", "compact": true}}
+        ]);
+        let schema = parse_schema(json).unwrap();
+        let fields = schema.fields.unwrap();
+        match &fields[0] {
+            Field::Option { compact, .. } => assert!(compact),
+            other => panic!("expected Option, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn option_requires_name() {
+        let json = serde_json::json!([
+            {"option": {"type": "u8"}}
+        ]);
+        assert!(parse_schema(json).is_err());
+    }
+
+    #[test]
+    fn option_requires_type_or_fields() {
+        let json = serde_json::json!([
+            {"name": "x", "option": {}}
+        ]);
+        let err = parse_schema(json).unwrap_err().to_string();
+        assert!(
+            err.contains("type") || err.contains("fields"),
+            "error was: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn option_rejects_empty_fields() {
+        let json = serde_json::json!([
+            {"name": "x", "option": {"fields": []}}
+        ]);
+        let err = parse_schema(json).unwrap_err().to_string();
+        assert!(err.contains("empty"), "error was: {}", err);
+    }
+
+    #[test]
+    fn non_compact_option_rejects_hex() {
+        let json = serde_json::json!([
+            {"name": "x", "option": {"type": "hex"}}
+        ]);
+        let err = parse_schema(json).unwrap_err().to_string();
+        assert!(err.contains("fixed size"), "error was: {}", err);
+    }
+
+    #[test]
+    fn compact_option_allows_hex() {
+        let json = serde_json::json!([
+            {"name": "x", "option": {"type": "hex", "compact": true}}
+        ]);
+        assert!(parse_schema(json).is_ok());
+    }
+
+    #[test]
+    fn option_field_name_in_duplicates() {
+        let json = serde_json::json!([
+            {"name": "x", "type": "u8"},
+            {"name": "x", "option": {"type": "u8"}}
+        ]);
+        let err = parse_schema(json).unwrap_err().to_string();
+        assert!(err.contains("duplicate"), "error was: {}", err);
+    }
+
+    #[test]
+    fn field_type_fixed_sizes() {
+        assert_eq!(FieldType::U8.fixed_size(), Some(1));
+        assert_eq!(FieldType::U16Be.fixed_size(), Some(2));
+        assert_eq!(FieldType::U32Le.fixed_size(), Some(4));
+        assert_eq!(FieldType::U64Be.fixed_size(), Some(8));
+        assert_eq!(FieldType::U256Be.fixed_size(), Some(32));
+        assert_eq!(FieldType::Address.fixed_size(), Some(32));
+        assert_eq!(FieldType::String32.fixed_size(), Some(32));
+        assert_eq!(FieldType::Bytes(20).fixed_size(), Some(20));
+        assert_eq!(FieldType::Hex.fixed_size(), None);
+    }
+
+    #[test]
+    fn fields_fixed_size_basic() {
+        let fields = vec![
+            Field::Named {
+                name: "a".to_string(),
+                field_type: FieldType::U8,
+                help: None,
+            },
+            Field::Named {
+                name: "b".to_string(),
+                field_type: FieldType::U64Le,
+                help: None,
+            },
+        ];
+        assert_eq!(fields_fixed_size(&fields), Some(9));
+    }
+
+    #[test]
+    fn fields_fixed_size_with_option() {
+        let fields = vec![Field::Option {
+            name: "opt".to_string(),
+            inner: OptionInner::Type(FieldType::U64Le),
+            compact: false,
+            help: None,
+        }];
+        // 1 tag + 8 inner = 9
+        assert_eq!(fields_fixed_size(&fields), Some(9));
+    }
+
+    #[test]
+    fn fields_fixed_size_variable() {
+        let fields = vec![Field::Named {
+            name: "data".to_string(),
+            field_type: FieldType::Hex,
+            help: None,
+        }];
+        assert_eq!(fields_fixed_size(&fields), None);
     }
 }

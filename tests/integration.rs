@@ -1190,3 +1190,329 @@ fn enum_args_shows_variants() {
     assert!(ev.contains(&"Fast".to_string()));
     assert!(ev.contains(&"Slow".to_string()));
 }
+
+// ---- Option field tests ----
+
+#[test]
+fn option_fixed_single_type_some_roundtrip() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("test.json"),
+        r#"[
+            {"name": "tag", "type": "u8"},
+            {"name": "val", "option": {"type": "u64le"}}
+        ]"#,
+    )
+    .unwrap();
+    let reg = Registry::load(dir.path()).unwrap();
+
+    let values = serde_json::json!({"tag": "1", "val": "42"});
+    let payload = reg.serialize("test", &values).unwrap();
+    // tag(1) + option_tag(1) + u64le(8) = 10 bytes
+    assert_eq!(payload.len(), 10);
+    assert_eq!(payload[0], 1); // tag
+    assert_eq!(payload[1], 1); // option: Some
+    assert_eq!(&payload[2..10], &42u64.to_le_bytes());
+
+    let parsed = reg.parse("test", &payload).unwrap();
+    assert_eq!(parsed["tag"], "1");
+    assert_eq!(parsed["val"], "42");
+}
+
+#[test]
+fn option_fixed_single_type_none_roundtrip() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("test.json"),
+        r#"[
+            {"name": "tag", "type": "u8"},
+            {"name": "val", "option": {"type": "u64le"}}
+        ]"#,
+    )
+    .unwrap();
+    let reg = Registry::load(dir.path()).unwrap();
+
+    // null → None
+    let values = serde_json::json!({"tag": "1", "val": null});
+    let payload = reg.serialize("test", &values).unwrap();
+    // Same total size: tag(1) + option_tag(1) + padding(8) = 10
+    assert_eq!(payload.len(), 10);
+    assert_eq!(payload[0], 1); // tag
+    assert_eq!(payload[1], 0); // option: None
+    assert_eq!(&payload[2..10], &[0u8; 8]); // zero padding
+
+    let parsed = reg.parse("test", &payload).unwrap();
+    assert_eq!(parsed["tag"], "1");
+    assert!(parsed["val"].is_null());
+}
+
+#[test]
+fn option_fixed_single_type_missing_is_none() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("test.json"),
+        r#"[{"name": "val", "option": {"type": "u8"}}]"#,
+    )
+    .unwrap();
+    let reg = Registry::load(dir.path()).unwrap();
+
+    // Missing field → None
+    let values = serde_json::json!({});
+    let payload = reg.serialize("test", &values).unwrap();
+    // 1 tag + 1 padding = 2
+    assert_eq!(payload.len(), 2);
+    assert_eq!(payload[0], 0); // None
+    assert_eq!(payload[1], 0); // padding
+}
+
+#[test]
+fn option_fixed_fields_some_roundtrip() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("test.json"),
+        r#"[
+            {"name": "range", "option": {"fields": [
+                {"name": "next", "type": "u64le"},
+                {"name": "last", "type": "u64le"}
+            ]}}
+        ]"#,
+    )
+    .unwrap();
+    let reg = Registry::load(dir.path()).unwrap();
+
+    let values = serde_json::json!({"range": {"next": "100", "last": "200"}});
+    let payload = reg.serialize("test", &values).unwrap();
+    // 1 tag + 8 + 8 = 17
+    assert_eq!(payload.len(), 17);
+    assert_eq!(payload[0], 1); // Some
+
+    let parsed = reg.parse("test", &payload).unwrap();
+    let range = parsed["range"].as_object().unwrap();
+    assert_eq!(range["next"], "100");
+    assert_eq!(range["last"], "200");
+}
+
+#[test]
+fn option_fixed_fields_none_roundtrip() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("test.json"),
+        r#"[
+            {"name": "range", "option": {"fields": [
+                {"name": "next", "type": "u64le"},
+                {"name": "last", "type": "u64le"}
+            ]}}
+        ]"#,
+    )
+    .unwrap();
+    let reg = Registry::load(dir.path()).unwrap();
+
+    let values = serde_json::json!({"range": null});
+    let payload = reg.serialize("test", &values).unwrap();
+    // Same total size: 1 tag + 16 padding = 17
+    assert_eq!(payload.len(), 17);
+    assert_eq!(payload[0], 0); // None
+    assert_eq!(&payload[1..17], &[0u8; 16]);
+
+    let parsed = reg.parse("test", &payload).unwrap();
+    assert!(parsed["range"].is_null());
+}
+
+#[test]
+fn option_compact_single_type_some_roundtrip() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("test.json"),
+        r#"[
+            {"name": "val", "option": {"type": "u64be", "compact": true}},
+            {"name": "tail", "type": "u8"}
+        ]"#,
+    )
+    .unwrap();
+    let reg = Registry::load(dir.path()).unwrap();
+
+    let values = serde_json::json!({"val": "99", "tail": "7"});
+    let payload = reg.serialize("test", &values).unwrap();
+    // 1 tag + 8 inner + 1 tail = 10
+    assert_eq!(payload.len(), 10);
+    assert_eq!(payload[0], 1); // Some
+
+    let parsed = reg.parse("test", &payload).unwrap();
+    assert_eq!(parsed["val"], "99");
+    assert_eq!(parsed["tail"], "7");
+}
+
+#[test]
+fn option_compact_single_type_none_roundtrip() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("test.json"),
+        r#"[
+            {"name": "val", "option": {"type": "u64be", "compact": true}},
+            {"name": "tail", "type": "u8"}
+        ]"#,
+    )
+    .unwrap();
+    let reg = Registry::load(dir.path()).unwrap();
+
+    let values = serde_json::json!({"val": null, "tail": "7"});
+    let payload = reg.serialize("test", &values).unwrap();
+    // 1 tag (no padding!) + 1 tail = 2
+    assert_eq!(payload.len(), 2);
+    assert_eq!(payload[0], 0); // None
+    assert_eq!(payload[1], 7); // tail
+
+    let parsed = reg.parse("test", &payload).unwrap();
+    assert!(parsed["val"].is_null());
+    assert_eq!(parsed["tail"], "7");
+}
+
+#[test]
+fn option_compact_fields_roundtrip() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("test.json"),
+        r#"[
+            {"name": "data", "option": {"fields": [
+                {"name": "a", "type": "u8"},
+                {"name": "b", "type": "u8"}
+            ], "compact": true}},
+            {"name": "end", "type": "u8"}
+        ]"#,
+    )
+    .unwrap();
+    let reg = Registry::load(dir.path()).unwrap();
+
+    // Some
+    let values = serde_json::json!({"data": {"a": "1", "b": "2"}, "end": "99"});
+    let payload = reg.serialize("test", &values).unwrap();
+    assert_eq!(payload, vec![1, 1, 2, 99]); // tag + a + b + end
+
+    let parsed = reg.parse("test", &payload).unwrap();
+    let data = parsed["data"].as_object().unwrap();
+    assert_eq!(data["a"], "1");
+    assert_eq!(data["b"], "2");
+    assert_eq!(parsed["end"], "99");
+
+    // None
+    let values = serde_json::json!({"data": null, "end": "99"});
+    let payload = reg.serialize("test", &values).unwrap();
+    assert_eq!(payload, vec![0, 99]); // tag + end (no padding)
+
+    let parsed = reg.parse("test", &payload).unwrap();
+    assert!(parsed["data"].is_null());
+    assert_eq!(parsed["end"], "99");
+}
+
+#[test]
+fn option_collect_missing_skips_option_fields() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("test.json"),
+        r#"[
+            {"name": "required", "type": "u8"},
+            {"name": "optional", "option": {"type": "u8"}}
+        ]"#,
+    )
+    .unwrap();
+    let reg = Registry::load(dir.path()).unwrap();
+
+    // Empty values → only "required" is missing, not "optional"
+    let values = serde_json::json!({});
+    let err = reg.serialize("test", &values).unwrap_err().to_string();
+    assert!(err.contains("required"), "error was: {}", err);
+    assert!(!err.contains("optional"), "error was: {}", err);
+}
+
+#[test]
+fn option_args_shows_type() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("test.json"),
+        r#"[
+            {"name": "a", "option": {"type": "u64le"}},
+            {"name": "b", "option": {"fields": [{"name": "x", "type": "u8"}]}}
+        ]"#,
+    )
+    .unwrap();
+    let reg = Registry::load(dir.path()).unwrap();
+    let args = reg.args("test").unwrap();
+    assert_eq!(args.len(), 2);
+    assert_eq!(args[0].name, "a");
+    assert_eq!(args[0].field_type, "option(u64le)");
+    assert_eq!(args[1].name, "b");
+    assert_eq!(args[1].field_type, "option(struct)");
+}
+
+#[test]
+fn option_xrpl_account_schema_loads() {
+    // Verify the updated xrpl-account schema loads and the option field is recognized
+    let reg = Registry::load(&schema_dir()).unwrap();
+    let schema = reg.get(&format!("{XRPL}/xrpl-account")).unwrap();
+    assert!(schema.about.is_some());
+    let args = reg.args(&format!("{XRPL}/xrpl-account")).unwrap();
+    let names: Vec<&str> = args.iter().map(|a| a.name.as_str()).collect();
+    assert!(names.contains(&"next-range"), "args: {:?}", names);
+}
+
+#[test]
+fn option_xrpl_account_roundtrip_some() {
+    let reg = Registry::load(&schema_dir()).unwrap();
+    let ref_str = format!("{XRPL}/xrpl-account");
+
+    // Build binary with Some next-range
+    // discriminator(8) + xrpl-address(20) + admin(20) + app-type(1) + xrpl-token-decimals(1) +
+    // xrpl-token-id(42) + current-range-next(8) + current-range-last(8) +
+    // next-range: tag(1) + next(8) + last(8) +
+    // refill-pending(1) + refill-nonce(8) + bump(1)
+    // Total: 8+20+20+1+1+42+8+8+1+8+8+1+8+1 = 135
+    let mut data = vec![0u8; 135];
+    // discriminator
+    let disc = hex::decode("1432f4993cef2ea8").unwrap();
+    data[..8].copy_from_slice(&disc);
+    // next-range tag at offset 108 (8+20+20+1+1+42+8+8)
+    data[108] = 1; // Some
+                   // next = 100 (u64le)
+    data[109..117].copy_from_slice(&100u64.to_le_bytes());
+    // last = 200 (u64le)
+    data[117..125].copy_from_slice(&200u64.to_le_bytes());
+
+    let parsed = reg.parse(&ref_str, &data).unwrap();
+    let obj = parsed.as_object().unwrap();
+    let range = obj["next-range"].as_object().unwrap();
+    assert_eq!(range["next"], "100");
+    assert_eq!(range["last"], "200");
+}
+
+#[test]
+fn option_xrpl_account_roundtrip_none() {
+    let reg = Registry::load(&schema_dir()).unwrap();
+    let ref_str = format!("{XRPL}/xrpl-account");
+
+    let mut data = vec![0u8; 135];
+    let disc = hex::decode("1432f4993cef2ea8").unwrap();
+    data[..8].copy_from_slice(&disc);
+    // next-range tag at offset 108
+    data[108] = 0; // None — padding is already zeros
+
+    let parsed = reg.parse(&ref_str, &data).unwrap();
+    let obj = parsed.as_object().unwrap();
+    assert!(obj["next-range"].is_null());
+}
+
+#[test]
+fn option_invalid_tag_rejected() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("test.json"),
+        r#"[{"name": "val", "option": {"type": "u8"}}]"#,
+    )
+    .unwrap();
+    let reg = Registry::load(dir.path()).unwrap();
+
+    // Tag byte = 2 (invalid)
+    let result = reg.parse("test", &[2, 0]);
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("invalid option tag"), "error was: {}", err);
+}

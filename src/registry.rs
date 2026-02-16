@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::fetch::FetchCache;
 use crate::parse::{self, Cursor};
 use crate::refs::{self, ParsedRef, Scope};
-use crate::schema::{self, Field, Schema};
+use crate::schema::{self, Field, OptionInner, Schema};
 use crate::serialize::{self, ArgInfo};
 
 /// Maximum nesting depth for schema resolution (prevents stack overflow from
@@ -478,6 +478,25 @@ impl Registry {
                     count_field: count_field.clone(),
                     ref_: Self::rewrite_ref_str(ref_, org, repo),
                 },
+                Field::Option {
+                    name,
+                    inner,
+                    compact,
+                    help,
+                } => {
+                    let inner = match inner {
+                        OptionInner::Fields(fields) => {
+                            OptionInner::Fields(Self::rewrite_field_this_scope(fields, org, repo))
+                        }
+                        other => other.clone(),
+                    };
+                    Field::Option {
+                        name: name.clone(),
+                        inner,
+                        compact: *compact,
+                        help: help.clone(),
+                    }
+                }
                 other => other.clone(),
             })
             .collect()
@@ -743,6 +762,20 @@ impl Registry {
                         enum_values: None,
                     });
                 }
+                Field::Option {
+                    name, inner, help, ..
+                } => {
+                    let type_str = match inner {
+                        OptionInner::Type(ft) => format!("option({})", ft),
+                        OptionInner::Fields(_) => "option(struct)".to_string(),
+                    };
+                    args.push(ArgInfo {
+                        name: name.clone(),
+                        field_type: type_str,
+                        help: help.clone(),
+                        enum_values: None,
+                    });
+                }
                 Field::Const { .. } | Field::Zeros(_) => {
                     // No user input needed
                 }
@@ -825,6 +858,9 @@ impl Registry {
                         visited,
                         missing,
                     )?;
+                }
+                Field::Option { .. } => {
+                    // Option fields are never required
                 }
                 Field::Const { .. } | Field::Zeros(_) | Field::Repeat { .. } => {}
             }
@@ -1001,6 +1037,49 @@ impl Registry {
                             .with_context(|| {
                                 format!("serializing repeat '{}' item {}", name, idx)
                             })?;
+                    }
+                }
+                Field::Option {
+                    name,
+                    inner,
+                    compact,
+                    ..
+                } => {
+                    let val = values.get(name);
+                    let is_none = val.is_none() || val == Some(&serde_json::Value::Null);
+
+                    if is_none {
+                        // Write None tag
+                        output.push(0x00);
+                        // In fixed mode, pad with zeros to match inner size
+                        if !compact {
+                            let pad = schema::option_inner_size(inner)
+                                .expect("non-compact option must have fixed size");
+                            output.extend(std::iter::repeat_n(0u8, pad));
+                        }
+                    } else {
+                        // Write Some tag
+                        output.push(0x01);
+                        match inner {
+                            OptionInner::Type(ft) => {
+                                let s = val.unwrap().as_str().ok_or_else(|| {
+                                    anyhow::anyhow!(
+                                        "option field '{}': expected string value",
+                                        name
+                                    )
+                                })?;
+                                serialize::serialize_field(ft, s, output).with_context(|| {
+                                    format!("serializing option field '{}'", name)
+                                })?;
+                            }
+                            OptionInner::Fields(fields) => {
+                                let obj = val.unwrap();
+                                self.serialize_fields(fields, bindings, obj, output, visited)
+                                    .with_context(|| {
+                                        format!("serializing option field '{}'", name)
+                                    })?;
+                            }
+                        }
                     }
                 }
             }
@@ -1218,6 +1297,57 @@ impl Registry {
                         items.push(serde_json::Value::Object(item_map));
                     }
                     map.insert(name.clone(), serde_json::Value::Array(items));
+                }
+                Field::Option {
+                    name,
+                    inner,
+                    compact,
+                    ..
+                } => {
+                    let tag = cursor
+                        .read_bytes(1)
+                        .with_context(|| format!("reading option tag for '{}'", name))?[0];
+
+                    match tag {
+                        0 => {
+                            // None — skip padding in fixed mode
+                            if !compact {
+                                let pad = schema::option_inner_size(inner)
+                                    .expect("non-compact option must have fixed size");
+                                cursor.read_bytes(pad).with_context(|| {
+                                    format!("skipping option padding for '{}'", name)
+                                })?;
+                            }
+                            map.insert(name.clone(), serde_json::Value::Null);
+                        }
+                        1 => {
+                            // Some — parse inner
+                            match inner {
+                                OptionInner::Type(ft) => {
+                                    let val =
+                                        parse::parse_field(ft, cursor).with_context(|| {
+                                            format!("parsing option field '{}'", name)
+                                        })?;
+                                    map.insert(name.clone(), serde_json::Value::String(val));
+                                }
+                                OptionInner::Fields(fields) => {
+                                    let inner_map = self
+                                        .parse_fields(fields, bindings, cursor, visited)
+                                        .with_context(|| {
+                                            format!("parsing option field '{}'", name)
+                                        })?;
+                                    map.insert(name.clone(), serde_json::Value::Object(inner_map));
+                                }
+                            }
+                        }
+                        other => {
+                            bail!(
+                                "invalid option tag {} for field '{}' (expected 0 or 1)",
+                                other,
+                                name
+                            );
+                        }
+                    }
                 }
             }
             i += 1;
