@@ -49,7 +49,7 @@ fn load_all_schemas() {
     // NTT transceiver
     assert!(names.contains(&format!("{NTT}/wormhole-transceiver-init").as_str()));
     assert!(names.contains(&format!("{NTT}/wormhole-peer-registration").as_str()));
-    assert_eq!(names.len(), 29);
+    assert_eq!(names.len(), 30);
 }
 
 #[test]
@@ -975,7 +975,7 @@ fn new_loads_from_disk_cache() {
     assert!(names.contains(&format!("{WH}/vaa").as_str()));
     assert!(names.contains(&format!("{TB}/transfer").as_str()));
     assert!(names.contains(&format!("{NTT}/native-token-transfer").as_str()));
-    assert_eq!(names.len(), 29);
+    assert_eq!(names.len(), 30);
 }
 
 #[test]
@@ -1017,7 +1017,7 @@ fn with_overrides_adds_new_schema() {
     assert!(names.contains(&format!("{WH}/vaa").as_str()));
     // Plus the new one
     assert!(names.contains(&"@custom/project/my-payload"));
-    assert_eq!(names.len(), 30);
+    assert_eq!(names.len(), 31);
 
     // The new schema works
     let values = serde_json::json!({"value": "42"});

@@ -1,0 +1,9 @@
+{
+  "about": "XRPL ticket confirmation — guardians report created ticket range after refill",
+  "fields": [
+    {"name": "prefix",        "const": "58544346"},
+    {"name": "ticket-start",  "type": "u64be"},
+    {"name": "ticket-count",  "type": "u64be", "help": "0 = refill failed on XRPL"},
+    {"name": "refill-nonce",  "type": "u64be"}
+  ]
+}

@@ -4,6 +4,7 @@
     {"name": "prefix",        "const": "5852464C"},
     {"name": "xrpl-account",  "type": "bytes20"},
     {"name": "use-ticket",    "type": "u64be"},
-    {"name": "request-count", "type": "u64be"}
+    {"name": "request-count", "type": "u64be"},
+    {"name": "refill-nonce",  "type": "u64be"}
   ]
 }

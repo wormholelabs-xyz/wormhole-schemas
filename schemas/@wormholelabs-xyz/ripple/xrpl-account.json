@@ -1,14 +1,19 @@
 {
   "about": "XRPL Account state (Solana Anchor account, borsh/LE)",
   "fields": [
-    {"name": "discriminator", "anchor": "account:XrplAccount"},
+    {"name": "discriminator",       "anchor": "account:XrplAccount"},
     {"name": "xrpl-address",        "type": "bytes20"},
     {"name": "admin",               "type": "bytes20"},
     {"name": "app-type",            "enum": {"type": "u8", "values": {"Core": 0, "Wtt": 1, "Ntt": 2}}},
     {"name": "xrpl-token-decimals", "type": "u8"},
     {"name": "xrpl-token-id",       "type": "bytes42"},
-    {"name": "next-ticket",         "type": "u64le"},
-    {"name": "last-ticket",         "type": "u64le"},
+    {"name": "current-range-next",  "type": "u64le"},
+    {"name": "current-range-last",  "type": "u64le"},
+    {"name": "next-range-present",  "type": "u8", "help": "Option tag: 0 = None, 1 = Some"},
+    {"name": "next-range-next",     "type": "u64le"},
+    {"name": "next-range-last",     "type": "u64le"},
+    {"name": "refill-pending",      "type": "u8", "help": "bool: 0 = false, 1 = true"},
+    {"name": "refill-nonce",        "type": "u64le"},
     {"name": "bump",                "type": "u8"}
   ]
 }
