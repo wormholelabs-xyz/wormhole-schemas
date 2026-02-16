@@ -7,12 +7,8 @@
     {"name": "app-type",            "enum": {"type": "u8", "values": {"Core": 0, "Wtt": 1, "Ntt": 2}}},
     {"name": "xrpl-token-decimals", "type": "u8"},
     {"name": "xrpl-token-id",       "type": "bytes42"},
-    {"name": "current-range-next",  "type": "u64le"},
-    {"name": "current-range-last",  "type": "u64le"},
-    {"name": "next-range", "option": {"fields": [
-      {"name": "next", "type": "u64le"},
-      {"name": "last", "type": "u64le"}
-    ]}},
+    {"name": "current-range", "ref": "@this/ticket-range"},
+    {"name": "next-range", "option": {"ref": "@this/ticket-range"}},
     {"name": "refill-pending",      "type": "u8", "help": "bool: 0 = false, 1 = true"},
     {"name": "refill-nonce",        "type": "u64le"},
     {"name": "bump",                "type": "u8"}

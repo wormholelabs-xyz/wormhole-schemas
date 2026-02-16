@@ -102,11 +102,13 @@ impl fmt::Display for FieldType {
     }
 }
 
-/// The inner content of an Option field: either a single typed value or inline fields.
+/// The inner content of an Option field.
 #[derive(Debug, Clone)]
 pub enum OptionInner {
     Type(FieldType),
     Fields(Vec<Field>),
+    /// Reference to another schema (resolved at runtime by the registry).
+    Ref(String),
 }
 
 /// A single field in a schema.
@@ -367,6 +369,7 @@ pub fn option_inner_size(inner: &OptionInner) -> Option<usize> {
     match inner {
         OptionInner::Type(ft) => ft.fixed_size(),
         OptionInner::Fields(fields) => fields_fixed_size(fields),
+        OptionInner::Ref(_) => None, // size depends on registry resolution
     }
 }
 
@@ -409,9 +412,14 @@ fn parse_option_field(
 
     let has_type = obj.contains_key("type");
     let has_fields = obj.contains_key("fields");
+    let has_ref = obj.contains_key("ref");
 
-    if has_type && has_fields {
-        return Err("option cannot have both 'type' and 'fields'".to_string());
+    let set_count = [has_type, has_fields, has_ref]
+        .iter()
+        .filter(|&&b| b)
+        .count();
+    if set_count > 1 {
+        return Err("option must have exactly one of 'type', 'fields', or 'ref'".to_string());
     }
 
     let inner = if let Some(type_val) = obj.get("type").and_then(|v| v.as_str()) {
@@ -424,15 +432,16 @@ fn parse_option_field(
             return Err("option 'fields' must not be empty".to_string());
         }
         OptionInner::Fields(fields)
+    } else if let Some(ref_val) = obj.get("ref").and_then(|v| v.as_str()) {
+        OptionInner::Ref(ref_val.to_string())
     } else {
-        return Err("option requires either 'type' or 'fields'".to_string());
+        return Err("option requires 'type', 'fields', or 'ref'".to_string());
     };
 
-    // Non-compact options must have computable fixed size
-    if !compact && option_inner_size(&inner).is_none() {
+    // Non-compact options must have computable fixed size (refs are deferred to runtime)
+    if !compact && !matches!(inner, OptionInner::Ref(_)) && option_inner_size(&inner).is_none() {
         return Err(
-            "non-compact option inner must have fixed size (cannot contain hex, refs, etc.)"
-                .to_string(),
+            "non-compact option inner must have fixed size (cannot contain hex, etc.)".to_string(),
         );
     }
 
@@ -858,16 +867,41 @@ mod tests {
     }
 
     #[test]
-    fn option_requires_type_or_fields() {
+    fn option_requires_type_or_fields_or_ref() {
         let json = serde_json::json!([
             {"name": "x", "option": {}}
         ]);
         let err = parse_schema(json).unwrap_err().to_string();
         assert!(
-            err.contains("type") || err.contains("fields"),
+            err.contains("type") || err.contains("fields") || err.contains("ref"),
             "error was: {}",
             err
         );
+    }
+
+    #[test]
+    fn parse_option_with_ref() {
+        let json = serde_json::json!([
+            {"name": "data", "option": {"ref": "@this/inner"}}
+        ]);
+        let schema = parse_schema(json).unwrap();
+        let fields = schema.fields.unwrap();
+        match &fields[0] {
+            Field::Option {
+                name,
+                inner,
+                compact,
+                ..
+            } => {
+                assert_eq!(name, "data");
+                assert!(!compact);
+                match inner {
+                    OptionInner::Ref(r) => assert_eq!(r, "@this/inner"),
+                    _ => panic!("expected Ref"),
+                }
+            }
+            other => panic!("expected Option, got {:?}", other),
+        }
     }
 
     #[test]

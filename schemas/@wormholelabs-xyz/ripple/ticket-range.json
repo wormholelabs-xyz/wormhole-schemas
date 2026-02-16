@@ -1,0 +1,7 @@
+{
+  "about": "A range of XRPL tickets (start..end)",
+  "fields": [
+    {"name": "next", "type": "u64le"},
+    {"name": "last", "type": "u64le"}
+  ]
+}

@@ -49,7 +49,8 @@ fn load_all_schemas() {
     // NTT transceiver
     assert!(names.contains(&format!("{NTT}/wormhole-transceiver-init").as_str()));
     assert!(names.contains(&format!("{NTT}/wormhole-peer-registration").as_str()));
-    assert_eq!(names.len(), 30);
+    assert!(names.contains(&format!("{XRPL}/ticket-range").as_str()));
+    assert_eq!(names.len(), 31);
 }
 
 #[test]
@@ -975,7 +976,7 @@ fn new_loads_from_disk_cache() {
     assert!(names.contains(&format!("{WH}/vaa").as_str()));
     assert!(names.contains(&format!("{TB}/transfer").as_str()));
     assert!(names.contains(&format!("{NTT}/native-token-transfer").as_str()));
-    assert_eq!(names.len(), 30);
+    assert_eq!(names.len(), 31);
 }
 
 #[test]
@@ -1017,7 +1018,7 @@ fn with_overrides_adds_new_schema() {
     assert!(names.contains(&format!("{WH}/vaa").as_str()));
     // Plus the new one
     assert!(names.contains(&"@custom/project/my-payload"));
-    assert_eq!(names.len(), 31);
+    assert_eq!(names.len(), 32);
 
     // The new schema works
     let values = serde_json::json!({"value": "42"});
@@ -1462,7 +1463,7 @@ fn option_xrpl_account_roundtrip_some() {
 
     // Build binary with Some next-range
     // discriminator(8) + xrpl-address(20) + admin(20) + app-type(1) + xrpl-token-decimals(1) +
-    // xrpl-token-id(42) + current-range-next(8) + current-range-last(8) +
+    // xrpl-token-id(42) + current-range{next(8)+last(8)} +
     // next-range: tag(1) + next(8) + last(8) +
     // refill-pending(1) + refill-nonce(8) + bump(1)
     // Total: 8+20+20+1+1+42+8+8+1+8+8+1+8+1 = 135
@@ -1479,6 +1480,11 @@ fn option_xrpl_account_roundtrip_some() {
 
     let parsed = reg.parse(&ref_str, &data).unwrap();
     let obj = parsed.as_object().unwrap();
+    // current-range is now a named ref to ticket-range
+    let current = obj["current-range"].as_object().unwrap();
+    assert_eq!(current["next"], "0");
+    assert_eq!(current["last"], "0");
+    // next-range is an option with ref
     let range = obj["next-range"].as_object().unwrap();
     assert_eq!(range["next"], "100");
     assert_eq!(range["last"], "200");
@@ -1515,4 +1521,85 @@ fn option_invalid_tag_rejected() {
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(err.contains("invalid option tag"), "error was: {}", err);
+}
+
+#[test]
+fn option_ref_fixed_roundtrip() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("inner.json"),
+        r#"[{"name": "x", "type": "u32le"}, {"name": "y", "type": "u32le"}]"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("test.json"),
+        r#"[
+            {"name": "tag", "type": "u8"},
+            {"name": "data", "option": {"ref": "@this/inner"}}
+        ]"#,
+    )
+    .unwrap();
+    let reg = Registry::load(dir.path()).unwrap();
+
+    // Some
+    let values = serde_json::json!({"tag": "1", "data": {"x": "10", "y": "20"}});
+    let payload = reg.serialize("test", &values).unwrap();
+    // tag(1) + option_tag(1) + x(4) + y(4) = 10
+    assert_eq!(payload.len(), 10);
+    assert_eq!(payload[1], 1); // Some
+
+    let parsed = reg.parse("test", &payload).unwrap();
+    let data = parsed["data"].as_object().unwrap();
+    assert_eq!(data["x"], "10");
+    assert_eq!(data["y"], "20");
+
+    // None
+    let values = serde_json::json!({"tag": "1", "data": null});
+    let payload = reg.serialize("test", &values).unwrap();
+    // tag(1) + option_tag(1) + padding(8) = 10 (fixed size preserved)
+    assert_eq!(payload.len(), 10);
+    assert_eq!(payload[1], 0); // None
+    assert_eq!(&payload[2..10], &[0u8; 8]);
+
+    let parsed = reg.parse("test", &payload).unwrap();
+    assert!(parsed["data"].is_null());
+}
+
+#[test]
+fn option_ref_compact_roundtrip() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("inner.json"),
+        r#"[{"name": "x", "type": "u16be"}]"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("test.json"),
+        r#"[
+            {"name": "data", "option": {"ref": "@this/inner", "compact": true}},
+            {"name": "end", "type": "u8"}
+        ]"#,
+    )
+    .unwrap();
+    let reg = Registry::load(dir.path()).unwrap();
+
+    // Some
+    let values = serde_json::json!({"data": {"x": "999"}, "end": "7"});
+    let payload = reg.serialize("test", &values).unwrap();
+    assert_eq!(payload.len(), 4); // tag(1) + x(2) + end(1)
+
+    let parsed = reg.parse("test", &payload).unwrap();
+    assert_eq!(parsed["data"]["x"], "999");
+    assert_eq!(parsed["end"], "7");
+
+    // None — compact, no padding
+    let values = serde_json::json!({"data": null, "end": "7"});
+    let payload = reg.serialize("test", &values).unwrap();
+    assert_eq!(payload.len(), 2); // tag(1) + end(1)
+    assert_eq!(payload[0], 0);
+    assert_eq!(payload[1], 7);
+
+    let parsed = reg.parse("test", &payload).unwrap();
+    assert!(parsed["data"].is_null());
+    assert_eq!(parsed["end"], "7");
 }

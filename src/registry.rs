@@ -488,6 +488,9 @@ impl Registry {
                         OptionInner::Fields(fields) => {
                             OptionInner::Fields(Self::rewrite_field_this_scope(fields, org, repo))
                         }
+                        OptionInner::Ref(r) => {
+                            OptionInner::Ref(Self::rewrite_ref_str(r, org, repo))
+                        }
                         other => other.clone(),
                     };
                     Field::Option {
@@ -500,6 +503,15 @@ impl Registry {
                 other => other.clone(),
             })
             .collect()
+    }
+
+    /// Parse a ref string from an option field into a ParsedRef.
+    fn resolve_option_ref(ref_str: &str) -> Result<ParsedRef> {
+        if ref_str.starts_with('@') {
+            refs::parse_ref(ref_str)
+        } else {
+            Ok(ParsedRef::Param(ref_str.to_string()))
+        }
     }
 
     /// Rewrite a ref string's `@this/` prefix to `@org/repo/`, handling
@@ -768,6 +780,7 @@ impl Registry {
                     let type_str = match inner {
                         OptionInner::Type(ft) => format!("option({})", ft),
                         OptionInner::Fields(_) => "option(struct)".to_string(),
+                        OptionInner::Ref(r) => format!("option({})", r),
                     };
                     args.push(ArgInfo {
                         name: name.clone(),
@@ -1053,8 +1066,21 @@ impl Registry {
                         output.push(0x00);
                         // In fixed mode, pad with zeros to match inner size
                         if !compact {
-                            let pad = schema::option_inner_size(inner)
-                                .expect("non-compact option must have fixed size");
+                            let pad = match inner {
+                                OptionInner::Ref(ref_) => {
+                                    let inner_ref = Self::resolve_option_ref(ref_)?;
+                                    let (fields, _) =
+                                        self.resolve_fields(&inner_ref, bindings, visited)?;
+                                    schema::fields_fixed_size(&fields).ok_or_else(|| {
+                                        anyhow::anyhow!(
+                                            "non-compact option '{}': ref has variable size",
+                                            name
+                                        )
+                                    })?
+                                }
+                                other => schema::option_inner_size(other)
+                                    .expect("non-compact option must have fixed size"),
+                            };
                             output.extend(std::iter::repeat_n(0u8, pad));
                         }
                     } else {
@@ -1078,6 +1104,14 @@ impl Registry {
                                     .with_context(|| {
                                         format!("serializing option field '{}'", name)
                                     })?;
+                            }
+                            OptionInner::Ref(ref_) => {
+                                let inner_ref = Self::resolve_option_ref(ref_)?;
+                                let obj = val.unwrap();
+                                self.serialize_recursive(
+                                    &inner_ref, bindings, obj, output, visited,
+                                )
+                                .with_context(|| format!("serializing option field '{}'", name))?;
                             }
                         }
                     }
@@ -1312,8 +1346,21 @@ impl Registry {
                         0 => {
                             // None — skip padding in fixed mode
                             if !compact {
-                                let pad = schema::option_inner_size(inner)
-                                    .expect("non-compact option must have fixed size");
+                                let pad = match inner {
+                                    OptionInner::Ref(ref_) => {
+                                        let inner_ref = Self::resolve_option_ref(ref_)?;
+                                        let (fields, _) =
+                                            self.resolve_fields(&inner_ref, bindings, visited)?;
+                                        schema::fields_fixed_size(&fields).ok_or_else(|| {
+                                            anyhow::anyhow!(
+                                                "non-compact option '{}': ref has variable size",
+                                                name
+                                            )
+                                        })?
+                                    }
+                                    other => schema::option_inner_size(other)
+                                        .expect("non-compact option must have fixed size"),
+                                };
                                 cursor.read_bytes(pad).with_context(|| {
                                     format!("skipping option padding for '{}'", name)
                                 })?;
@@ -1333,6 +1380,15 @@ impl Registry {
                                 OptionInner::Fields(fields) => {
                                     let inner_map = self
                                         .parse_fields(fields, bindings, cursor, visited)
+                                        .with_context(|| {
+                                            format!("parsing option field '{}'", name)
+                                        })?;
+                                    map.insert(name.clone(), serde_json::Value::Object(inner_map));
+                                }
+                                OptionInner::Ref(ref_) => {
+                                    let inner_ref = Self::resolve_option_ref(ref_)?;
+                                    let inner_map = self
+                                        .parse_recursive(&inner_ref, bindings, cursor, visited)
                                         .with_context(|| {
                                             format!("parsing option field '{}'", name)
                                         })?;
