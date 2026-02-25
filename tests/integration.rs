@@ -1462,21 +1462,20 @@ fn option_xrpl_account_roundtrip_some() {
     let ref_str = format!("{XRPL}/xrpl-account");
 
     // Build binary with Some next-range
-    // discriminator(8) + xrpl-address(20) + admin(20) + app-type(1) + xrpl-token-decimals(1) +
-    // xrpl-token-id(42) + current-range{next(8)+last(8)} +
-    // next-range: tag(1) + next(8) + last(8) +
-    // refill-pending(1) + refill-nonce(8) + bump(1)
-    // Total: 8+20+20+1+1+42+8+8+1+8+8+1+8+1 = 135
-    let mut data = vec![0u8; 135];
+    // discriminator(8) + bump(1) + xrpl-address(20) + admin(20) + app-type(1) +
+    // xrpl-token-decimals(1) + xrpl-token-id(42) + current-range{next(8)+last(8)} +
+    // next-range: tag(1) + next(8) + last(8) + refill-pending(1)
+    // Total: 8+1+20+20+1+1+42+16+1+16+1 = 127
+    let mut data = vec![0u8; 127];
     // discriminator
     let disc = hex::decode("1432f4993cef2ea8").unwrap();
     data[..8].copy_from_slice(&disc);
-    // next-range tag at offset 108 (8+20+20+1+1+42+8+8)
-    data[108] = 1; // Some
+    // next-range tag at offset 109 (8+1+20+20+1+1+42+8+8)
+    data[109] = 1; // Some
                    // next = 100 (u64le)
-    data[109..117].copy_from_slice(&100u64.to_le_bytes());
+    data[110..118].copy_from_slice(&100u64.to_le_bytes());
     // last = 200 (u64le)
-    data[117..125].copy_from_slice(&200u64.to_le_bytes());
+    data[118..126].copy_from_slice(&200u64.to_le_bytes());
 
     let parsed = reg.parse(&ref_str, &data).unwrap();
     let obj = parsed.as_object().unwrap();
@@ -1495,11 +1494,11 @@ fn option_xrpl_account_roundtrip_none() {
     let reg = Registry::load(&schema_dir()).unwrap();
     let ref_str = format!("{XRPL}/xrpl-account");
 
-    let mut data = vec![0u8; 135];
+    let mut data = vec![0u8; 127];
     let disc = hex::decode("1432f4993cef2ea8").unwrap();
     data[..8].copy_from_slice(&disc);
-    // next-range tag at offset 108
-    data[108] = 0; // None — padding is already zeros
+    // next-range tag at offset 109
+    data[109] = 0; // None — padding is already zeros
 
     let parsed = reg.parse(&ref_str, &data).unwrap();
     let obj = parsed.as_object().unwrap();
