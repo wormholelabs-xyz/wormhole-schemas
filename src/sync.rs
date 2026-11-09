@@ -208,20 +208,12 @@ impl Progress {
     }
 
     fn render_bar(&self, label: &str) -> String {
-        let pct = if self.total > 0 {
-            self.done * 100 / self.total
-        } else {
-            0
-        };
+        let pct = (self.done * 100).checked_div(self.total).unwrap_or(0);
         let counter = format!(" {}/{} ", self.done, self.total);
 
         // [####    ] 12/29  @org/repo/name
         let bar_width: usize = 20;
-        let filled = if self.total > 0 {
-            (self.done * bar_width) / self.total
-        } else {
-            0
-        };
+        let filled = (self.done * bar_width).checked_div(self.total).unwrap_or(0);
         let empty = bar_width - filled;
         let bar = format!("[{}{}]", "#".repeat(filled), " ".repeat(empty));
 
